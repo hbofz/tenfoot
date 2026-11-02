@@ -109,7 +109,12 @@ for s in tenfoot tenfoot-spotify tenfoot-airplay; do
   [ -e "$UNITS/$s.service" ] && { systemctl --user enable "$s" 2>/dev/null; systemctl --user restart "$s"; }
 done
 if [ "$WALLPAPERS" = 1 ]; then
-  echo "Downloading wallpapers (a few minutes; re-running fetches any that are missing)..."
-  python3 "$ROOT/tools/wallpapers.py" >/dev/null || echo "Some wallpapers didn't download; the home screen uses the rest."
+  # One now, so the first boot has a picture (a rate-limited download mustn't hold up the install). The rest in
+  # the background, resuming after a reboot until it has them all; the home screen uses what's there so far.
+  timeout 180 python3 "$ROOT/tools/wallpapers.py" 1 >/dev/null 2>&1 || echo "No wallpaper yet; they'll keep downloading in the background."
+  fill "$ROOT/system/tenfoot-wallpapers.service" > "$UNITS/tenfoot-wallpapers.service"
+  systemctl --user daemon-reload
+  systemctl --user enable tenfoot-wallpapers 2>/dev/null
+  systemctl --user start --no-block tenfoot-wallpapers
 fi
 echo "Installed. Reboot to start the kiosk: sudo reboot"

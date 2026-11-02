@@ -1,0 +1,13 @@
+[Unit]
+Description=Tenfoot: download the home screen's wallpapers
+
+[Service]
+# Wikimedia rate-limits downloads, so this can take a long time. It skips what it has, so a reboot just resumes it.
+Type=oneshot
+Nice=15
+Restart=on-failure
+RestartSec=300
+ExecStart=/usr/bin/python3 @ROOT@/tools/wallpapers.py
+
+[Install]
+WantedBy=default.target

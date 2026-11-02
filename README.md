@@ -2,7 +2,7 @@
 
 Turn a Raspberry Pi 4 into a TV box you can use from the couch. It boots straight into a full-screen home screen, and your streaming sites work with arrow keys instead of a mouse.
 
-> **Status: early.** Developed on one Pi on one TV. The installer hasn't been run on a clean Pi OS yet.
+> **Status: early.** Developed on one Pi on one TV. The installer has run on a clean Pi OS, but a clean install hasn't been tried on a real TV yet.
 
 - **Streaming sites, remote-friendly.** YouTube's TV app, Netflix, Disney+, HBO Max, Crunchyroll, Paramount+ and Shahid. Arrows move a highlight, OK picks, Back goes back, and an on-screen keyboard handles sign-in. Any other website works too, with a cursor for what the highlight can't reach.
 - **Your phone is the remote.** Scan the QR code on the TV to get a touchpad, keys, typing and volume, with no app to install.
@@ -15,11 +15,15 @@ You need your own subscriptions: Tenfoot plays what your accounts already can, t
 
 ## Install
 
-On a Raspberry Pi 4 running 64-bit Raspberry Pi OS Trixie:
+1. With [Raspberry Pi Imager](https://www.raspberrypi.com/software/), put 64-bit Raspberry Pi OS (Trixie; Lite is enough) on an SD card or USB drive for a Raspberry Pi 4. In its settings, set your Wi-Fi with its country, and turn on SSH.
+2. Plug the Pi into the TV and power it on, then connect to it over SSH from a computer and run:
 
-    git clone https://github.com/hbofz/tenfoot ~/tenfoot
-    ~/tenfoot/install.sh          # add --airplay for the AirPlay receiver
-    sudo reboot
+       sudo apt-get install -y git
+       git clone https://github.com/hbofz/tenfoot ~/tenfoot
+       ~/tenfoot/install.sh          # add --airplay for the AirPlay receiver
+       sudo reboot
+
+It boots into the home screen. One wallpaper comes with the install; the rest download in the background and can take hours, and the home screen uses what it has so far.
 
 Undo it with `~/tenfoot/uninstall.sh`.
 
@@ -63,6 +67,7 @@ Anyone with a link can control the TV. They can't reach this box's own services 
     python3 tests/browser/test_sites.py
     python3 tests/browser/test_keyboard.py
     python3 tests/browser/test_service.py   # the real service against a real Chromium; visits YouTube and Shahid
+    python3 tests/box_check.py              # on an installed box: checks the running service, browser and input
 
 ## Credits and licence
 

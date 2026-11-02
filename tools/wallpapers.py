@@ -51,6 +51,7 @@ def cover(im, w, h):
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    failed = 0
     for wp in load()[:limit]:
         path = os.path.join(OUT, wp["id"] + ".jpg")
         if not os.path.exists(path):
@@ -61,6 +62,7 @@ if __name__ == "__main__":
                     f.write(credit + "\n")
             except Exception as e:  # one bad entry shouldn't stop the rest
                 print(f"{wp['id']}: skipped, {e}")
+                failed += 1
                 continue
             im.save(path + ".tmp", "JPEG", quality=84, optimize=True)  # baseline: the Pi decodes it fastest
             os.replace(path + ".tmp", path)  # never a half-written photo that looks done
@@ -72,3 +74,4 @@ if __name__ == "__main__":
             im = ImageEnhance.Brightness(ImageEnhance.Color(im).enhance(1.35)).enhance(0.85)
             im.save(path[:-4] + "-blur.jpg.tmp", "JPEG", quality=80)
             os.replace(path[:-4] + "-blur.jpg.tmp", path[:-4] + "-blur.jpg")
+    sys.exit(1 if failed else 0)  # the service tries again later for the ones it missed

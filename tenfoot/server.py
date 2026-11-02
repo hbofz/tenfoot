@@ -107,7 +107,7 @@ def remote_handler(controls, house):
                 return
             parts = self.path.split("?")[0].split("/")
             msg = (fmt % args).replace(parts[1], "<token>") if len(parts) > 1 and parts[1] else fmt % args
-            print(f"http: {msg} link={getattr(self, 'name', None)} from={self.client_address[0]} ua={self.headers.get('User-Agent', '')[:60]}", flush=True)
+            print(f"http: {msg} link={getattr(self, 'name', None)} from={self.headers.get('X-Forwarded-For') or self.client_address[0]} ua={self.headers.get('User-Agent', '')[:60]}", flush=True)
 
     return Remote
 
