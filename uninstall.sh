@@ -11,7 +11,8 @@ if id "$TV" >/dev/null 2>&1; then
   sudo loginctl disable-linger "$TV"
 fi
 sudo rm -f /etc/chromium/policies/managed/tenfoot.json /etc/modules-load.d/tenfoot.conf /etc/udev/rules.d/60-tenfoot-uinput.rules \
-  /etc/systemd/journald.conf.d/tenfoot.conf /etc/systemd/system/getty@tty1.service.d/autologin.conf /usr/local/bin/tenfoot
+  /etc/systemd/journald.conf.d/tenfoot.conf /etc/polkit-1/rules.d/50-tenfoot.rules \
+  /etc/NetworkManager/dnsmasq-shared.d/tenfoot.conf /etc/sysctl.d/60-tenfoot.conf /etc/systemd/system/getty@tty1.service.d/autologin.conf /usr/local/bin/tenfoot
 sudo systemctl daemon-reload
 if [ "${1:-}" = --purge ] && id "$TV" >/dev/null 2>&1; then
   sudo pkill -KILL -u "$TV" 2>/dev/null

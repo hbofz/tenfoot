@@ -15,7 +15,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, config, controls, cursor, kiosk, links, lyrics, server, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, config, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -552,6 +552,127 @@ class SpotifyAccounts(unittest.TestCase):
         self.s.player = "http://127.0.0.1:9"
         self.s.pause()
         self.assertIsNone(self.s.music())
+
+
+class WifiSetup(unittest.TestCase):
+    def test_parse_networks(self):
+        out = "Home\\:Net:70:WPA2\nHome\\:Net:40:WPA2\nCafe:90:\nCampus:95:WPA2 802.1X\n:50:WPA2\nTenfoot-Setup:99:WPA2\n"
+        self.assertEqual(setup.parse_networks(out), [{"ssid": "Cafe", "signal": 90, "open": True}, {"ssid": "Home:Net", "signal": 70, "open": False}])
+
+    def test_has_network(self):
+        self.assertTrue(setup.has_network("wifi:connected:Home\nloopback:connected (externally):lo\n"))
+        self.assertTrue(setup.has_network("ethernet:connected:Wired\nwifi:disconnected:\n"))
+        self.assertFalse(setup.has_network("wifi:connected:tenfoot-setup\nloopback:connected (externally):lo\n"))
+        self.assertFalse(setup.has_network("wifi:connecting (configuring):Home\ntun:connected (externally):tailscale0\n"))
+
+    def test_wifi_qr_escapes(self):
+        self.assertEqual(setup.wifi_qr_text('a;b', 'p:w"'), 'WIFI:T:WPA;S:a\\;b;P:p\\:w\\";;')
+
+    def box(self):
+        d = Path(tempfile.mkdtemp())
+        s = setup.Setup(FakeBrowser(), run_dir=d, password_file=d / "pw")
+        s.calls = []
+        s.up = False
+
+        def nmcli(*args, timeout=30):
+            s.calls.append(args)
+            ok = not (s.fail_join and "connect" in args)
+            if "connect" in args and ok:
+                s.up = True
+            out = "wifi:connected:Home\n" if s.up and "TYPE,STATE,CONNECTION" in args else "wifi:disconnected:\n" if "TYPE,STATE,CONNECTION" in args else ""
+            return mock.Mock(returncode=0 if ok else 4, stdout=out)
+        s.nmcli, s.fail_join = nmcli, False
+        return s
+
+    def test_watch_waits_only_when_a_network_is_known(self):
+        for saved, secs_until_start in ((["Home"], setup.GRACE), ([], setup.FIRST_BOOT_GRACE)):
+            s = self.box()
+            s.has_wifi, s.saved_wifi = (lambda: True), (lambda saved=saved: saved)
+            clock = [0.0]
+            started = []
+
+            def tick(seconds):
+                clock[0] += seconds
+                if len(started) or clock[0] > 300:
+                    raise StopIteration
+
+            s.start = lambda: started.append(clock[0])
+            with mock.patch("time.sleep", tick), mock.patch("time.monotonic", lambda: clock[0]), self.assertRaises(StopIteration):
+                s.watch()
+            self.assertEqual(len(started), 1)
+            self.assertLessEqual(started[0] - secs_until_start, 10, saved)
+            self.assertGreater(started[0], secs_until_start, saved)
+
+    def test_refuses_bad_forms(self):
+        s = self.box()
+        with self.assertRaises(ValueError):
+            s.submit("Home", "pw12345678")  # not in setup
+        s.state = "hotspot"
+        for ssid, pw in ((None, ""), ("", ""), ("x" * 33, ""), ("Home", "short"), ("Home", "x" * 64), ("Home", 5)):
+            with self.assertRaises(ValueError, msg=(ssid, pw)):
+                s.submit(ssid, pw)
+
+    def test_good_password_goes_home(self):
+        s = self.box()
+        s.state = "hotspot"
+        with mock.patch("time.sleep"):
+            s.join("Home", "goodpassword")
+        self.assertEqual(s.state, "off")
+        self.assertIn(("navigate", apps.page_url("home.html")), s.browser.calls)
+        self.assertTrue(any("connect" in c and "goodpassword" in c for c in s.calls))
+        self.assertIn(("con", "delete", setup.HOTSPOT), s.calls)
+
+    def test_bad_password_returns_to_setup_and_forgets_it(self):
+        s = self.box()
+        s.state, s.fail_join = "hotspot", True
+        with mock.patch("time.sleep"), mock.patch.object(setup, "ThreadingHTTPServer"), mock.patch.object(s, "scan", return_value=[]):
+            s.join("Home", "wrongpassword")
+        self.assertEqual(s.state, "hotspot")
+        self.assertIn("Couldn't join Home", s.error)
+        self.assertIn(("con", "delete", "Home"), s.calls)
+        self.assertNotIn("wrongpassword", json.dumps(s.status()))
+
+    def test_setup_password_is_private_and_stable(self):
+        p = Path(tempfile.mkdtemp()) / "sub" / "pw"
+        first = setup.load_password(p)
+        self.assertEqual(setup.load_password(p), first)
+        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+
+    def test_page_never_shows_the_password_after_setup(self):
+        s = self.box()
+        s.password = "abcd1234"
+        self.assertEqual(s.status()["password"], "")
+
+    def test_phone_page_and_form(self):
+        s = self.box()
+        s.state = "hotspot"
+        s.networks = [{"ssid": "<b>Home", "signal": 70, "open": False}]
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), setup.handler(s))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        for path in ("/", "/hotspot-detect.html", "/generate_204"):
+            self.assertIn(b"Pick your Wi-Fi", urllib.request.urlopen(base + path, timeout=5).read())  # any address: captive portal
+        self.assertEqual(json.load(urllib.request.urlopen(base + "/networks", timeout=5))[0]["ssid"], "<b>Home")
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(urllib.request.Request(base + "/join", data=b'{"ssid":"Home","password":"x"}', method="POST"), timeout=5)
+        self.assertEqual(e.exception.code, 400)
+        page = (config.WEB_HOME / "setup-phone.html").read_text()
+        self.assertNotIn("innerHTML", page)
+
+    def test_local_api_reports_setup(self):
+        self.assertEqual(apps.app_of(apps.page_url("setup.html")), ("setup", None))
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), server.Local)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        url = f"http://127.0.0.1:{srv.server_address[1]}/setup"
+        self.assertEqual(json.load(urllib.request.urlopen(url, timeout=5))["state"], "off")
+        s = self.box()
+        s.state, s.password = "hotspot", "abcd1234"
+        with mock.patch.object(server.Local, "wifi_setup", s):
+            self.assertEqual(json.load(urllib.request.urlopen(url, timeout=5))["password"], "abcd1234")
 
 
 class Lyrics(unittest.TestCase):

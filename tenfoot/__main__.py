@@ -6,7 +6,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from . import browser, cec, config, kiosk, links, server, spotify, watcher
+from . import browser, cec, config, kiosk, links, server, setup, spotify, watcher
 from .apps import load_apps
 from .controls import Controls
 from .inputs import Input
@@ -37,11 +37,14 @@ def qr_loop(settings, house):
     """Keep the TV's QR code right: phones find this box by its address, which can change."""
     last = None
     while True:
-        url = links.link_url(settings, links.guest_token(house))
-        if url != last or not (config.RUN / "remote-qr.svg").exists():
-            links.write_qr(settings, house)
-            last = url
-        time.sleep(60)
+        try:
+            url = links.link_url(settings, links.guest_token(house))
+            if url != last or not (config.RUN / "remote-qr.svg").exists():
+                links.write_qr(settings, house)
+                last = url
+        except OSError:
+            pass  # no network right now: the QR code waits for one
+        time.sleep(15)
 
 
 def serve(settings):
@@ -57,6 +60,9 @@ def serve(settings):
                (watcher.run, cdp, script, settings.jellyfin_url, pause),
                (tv.power_loop,), (kiosk.watchdog, cdp, settings), (qr_loop, settings, house),
                *[(tv.route_loop, dev) for dev in sorted(glob.glob("/dev/cec*"))]]
+    wifi_setup = setup.Setup(cdp)
+    server.Local.wifi_setup = wifi_setup
+    workers.append((wifi_setup.watch,))
     if music:
         music.lyrics_offset()  # (re)write the TV screen's copy of the lyrics timing
         workers.append((music.watch_logins,))

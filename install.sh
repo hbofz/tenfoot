@@ -20,7 +20,7 @@ done
 # Chromium and the kiosk's compositor, Widevine from Raspberry Pi's own repo (never bundled), sound, CEC, input.
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade curl chromium cage wlr-randr libwidevinecdm0 \
-  pipewire-pulse wireplumber pulseaudio-utils v4l-utils coreutils procps \
+  pipewire-pulse wireplumber pulseaudio-utils v4l-utils coreutils procps network-manager dnsmasq-base polkitd \
   python3-evdev python3-websocket python3-qrcode python3-cryptography python3-numpy python3-pil >/dev/null
 [ "$AIRPLAY" = 0 ] || {
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade --no-install-recommends uxplay gstreamer1.0-plugins-bad avahi-daemon >/dev/null
@@ -46,6 +46,18 @@ echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d
 sudo modprobe uinput
 sudo udevadm control --reload
 sudo udevadm trigger /dev/uinput
+
+# First-time Wi-Fi (tenfoot/setup.py): the TV's user may manage the network, every name on the setup hotspot leads to
+# this box so phones open the setup page, and it may answer on port 80, where phones look for that.
+sudo tee /etc/polkit-1/rules.d/50-tenfoot.rules >/dev/null <<POLKIT
+polkit.addRule(function (action, subject) {
+  if (subject.user == "$TV" && action.id.indexOf("org.freedesktop.NetworkManager.") == 0) return polkit.Result.YES;
+});
+POLKIT
+sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+echo 'address=/#/10.42.0.1' | sudo tee /etc/NetworkManager/dnsmasq-shared.d/tenfoot.conf >/dev/null
+echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/60-tenfoot.conf >/dev/null
+sudo sysctl -q --system
 
 # Keep logs across reboots, capped, so an unexpected restart can be explained.
 sudo mkdir -p /etc/systemd/journald.conf.d

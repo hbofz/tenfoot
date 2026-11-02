@@ -62,6 +62,7 @@ def status(url, method="GET"):
 check("the TV's user has no sudo", subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0
       and not {"sudo", "adm"} & {grp.getgrgid(g).gr_name for g in os.getgroups()})
 check("browser answers", wait(cdp.current_url, 60))
+check("local API answers", json.load(urllib.request.urlopen(f"http://127.0.0.1:{config.LOCAL_PORT}/setup", timeout=5))["state"] == "off")
 check("wrong token gets 404", status(f"http://127.0.0.1:{settings.remote_port}/wrong/") == 404)
 check("phone page loads", b"Tenfoot" in urllib.request.urlopen(base + "/", timeout=5).read())
 

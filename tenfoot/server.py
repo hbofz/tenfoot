@@ -114,6 +114,7 @@ def remote_handler(controls, house):
 
 class Local(BaseHTTPRequestHandler):
     """What the TV's own pages ask for. Sites on the TV can't reach it (chromium-policy.json)."""
+    wifi_setup = None  # not "setup": that's a method the request handler needs
 
     def reply(self, code, body, ctype="application/json"):
         self.send_response(code)
@@ -126,6 +127,9 @@ class Local(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == "/setup":
+            status = self.wifi_setup.status() if self.wifi_setup else {"state": "off"}
+            return self.reply(200, json.dumps(status).encode())
         if url.path == "/lyrics":
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             try:

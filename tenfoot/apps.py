@@ -10,7 +10,7 @@ from .config import CONFIG_DIR, ROOT, WEB_HOME
 # Any page on these sites, sign-in pages too, is that app.
 SITE_APPS = {"netflix.com": "netflix", "shahid.mbc.net": "shahid", "disneyplus.com": "disney", "hbomax.com": "hbomax",
              "crunchyroll.com": "crunchyroll", "paramountplus.com": "paramount"}
-PAGES = {"home.html": "home", "spotify.html": "spotify", "sleep.html": "asleep"}
+PAGES = {"home.html": "home", "spotify.html": "spotify", "sleep.html": "asleep", "setup.html": "setup"}
 
 
 def load_apps(settings):

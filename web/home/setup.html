@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tenfoot setup</title>
+<style>
+  @font-face { font-family: "Inter"; font-weight: 100 900; src: url(fonts/Inter-opsz.woff2) format("woff2"); }
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; gap: 7vw; color: #fff; font: 500 1.7vw/1.45 "Inter", sans-serif;
+         background: radial-gradient(90vw 90vh at 30% 20%, #26324a, #0b0e16 70%); }
+  h1 { font: 700 3.8vw/1.1 "Inter", sans-serif; letter-spacing: -.02em; margin: 0 0 3vh; }
+  ol { margin: 0; padding-left: 2.2vw; } li { margin-bottom: 1.4vh; } b { font-weight: 650; }
+  code { font: 650 1.7vw "Inter", sans-serif; font-variant-numeric: tabular-nums; }
+  #qr { width: 22vw; height: 22vw; padding: 1.2vw; box-sizing: border-box; border-radius: 2vw; background: #fff; }
+  #error { color: #ff9f8f; margin: 0 0 3vh; } [hidden] { display: none !important; }
+</style>
+<main id="wait" hidden><h1>Connecting to your Wi-Fi…</h1><p>This takes up to a minute.</p></main>
+<div id="start" hidden style="display: contents">
+  <img id="qr" alt="">
+  <section>
+    <h1>Let's connect to Wi-Fi</h1>
+    <p id="error" hidden></p>
+    <ol>
+      <li>Point your phone's camera at this code and join the network.<br>Or join <b id="ssid"></b> with password <code id="pw"></code></li>
+      <li>A setup page opens on your phone. If it doesn't, go to <b>http://10.42.0.1</b></li>
+      <li>Pick your Wi-Fi.</li>
+    </ol>
+  </section>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+async function poll() {
+  try {
+    const s = await (await fetch("http://127.0.0.1:8766/setup", { cache: "no-store", signal: AbortSignal.timeout(3000) })).json();
+    if (s.state === "off") return (location.href = "home.html");
+    $("wait").hidden = s.state !== "joining";
+    $("start").hidden = s.state !== "hotspot";
+    if (s.state === "hotspot") {
+      $("ssid").textContent = s.ssid;
+      $("pw").textContent = s.password;
+      $("error").textContent = s.error;
+      $("error").hidden = !s.error;
+      if (!$("qr").src) $("qr").src = `run/setup-wifi.svg?${Date.now()}`;
+    }
+  } catch {}
+  setTimeout(poll, 1500);
+}
+poll();
+</script>
