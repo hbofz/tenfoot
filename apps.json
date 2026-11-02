@@ -1,0 +1,11 @@
+[
+  {"id": "youtube", "name": "YouTube", "url": "https://www.youtube.com/tv", "color": "#ff2d2d", "mouse": false},
+  {"id": "netflix", "name": "Netflix", "url": "https://www.netflix.com/browse", "color": "#e50914", "mouse": false},
+  {"id": "disney", "name": "Disney+", "url": "https://www.disneyplus.com/", "color": "#18b4f5", "mouse": false},
+  {"id": "hbomax", "name": "HBO Max", "url": "https://play.hbomax.com/", "color": "#7c4dff", "mouse": false},
+  {"id": "spotify", "name": "Spotify", "url": "spotify.html", "color": "#1ed760", "mouse": false},
+  {"id": "crunchyroll", "name": "Crunchyroll", "url": "https://www.crunchyroll.com/", "color": "#f47521", "mouse": false},
+  {"id": "paramount", "name": "Paramount+", "url": "https://www.paramountplus.com/", "color": "#0064ff", "mouse": false},
+  {"id": "shahid", "name": "Shahid", "url": "https://shahid.mbc.net/", "color": "#00cc99", "mouse": false},
+  {"id": "web", "name": "Web", "url": "https://www.google.com", "color": "#3d8bff", "mouse": true}
+]

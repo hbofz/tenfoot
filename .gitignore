@@ -1,0 +1,7 @@
+__pycache__/
+/web/home/run/
+/web/home/wallpapers/
+/chromium/
+/wlroots-build/
+/spotify/
+.venv/

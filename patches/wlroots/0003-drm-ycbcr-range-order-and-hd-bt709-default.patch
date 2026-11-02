@@ -1,0 +1,77 @@
+drm: kernel order for YCbCr ranges; BT.709 for HD video without colour information
+
+1. wlr_drm_color_range listed full before limited, while the kernel's drm_color_range has limited
+   as 0: every plane asked for as limited range went out as full range (washed-out video in direct
+   scanout), and the other way about.
+2. A client that sends no colour representation (Chromium) got BT.601 for everything. Video of HD
+   size is taken to be BT.709, as players do, in the DRM backend and in the GLES2 renderer alike, so
+   scanout and composition still agree.
+
+diff -ru a/backend/drm/atomic.c b/backend/drm/atomic.c
+--- a/backend/drm/atomic.c	2026-10-21 17:34:51.664526241 -0500
++++ b/backend/drm/atomic.c	2026-10-21 17:34:51.723240802 -0500
+@@ -487,7 +487,11 @@
+ 	// between direct scanout and composition. Default to BT601/limited to
+ 	// match GLES2 renderer behavior, or use values from output state if
+ 	// WLR_OUTPUT_STATE_COLOR_ENCODING_AND_RANGE is committed.
+-	enum wlr_color_encoding encoding = WLR_COLOR_ENCODING_BT601;
++	// Without colour information, video of HD size is taken to be BT.709, as
++	// players do (and as the GLES2 renderer does, see render/egl.c).
++	enum wlr_color_encoding encoding =
++		(output_state->committed & WLR_OUTPUT_STATE_BUFFER) && output_state->buffer != NULL &&
++		output_state->buffer->height >= 720 ? WLR_COLOR_ENCODING_BT709 : WLR_COLOR_ENCODING_BT601;
+ 	enum wlr_color_range range = WLR_COLOR_RANGE_LIMITED;
+ 	if (output_state->committed & WLR_OUTPUT_STATE_COLOR_REPRESENTATION) {
+ 		encoding = wlr_color_representation_v1_color_encoding_to_wlr(
+diff -ru a/backend/drm/libliftoff.c b/backend/drm/libliftoff.c
+--- a/backend/drm/libliftoff.c	2026-10-21 17:34:51.666867048 -0500
++++ b/backend/drm/libliftoff.c	2026-10-21 17:34:51.723626480 -0500
+@@ -198,7 +198,11 @@
+ 	// between direct scanout and composition. Default to BT601/limited to
+ 	// match GLES2 renderer behavior, or use values from output state if
+ 	// WLR_OUTPUT_STATE_COLOR_ENCODING_AND_RANGE is committed.
+-	enum wlr_color_encoding encoding = WLR_COLOR_ENCODING_BT601;
++	// Without colour information, video of HD size is taken to be BT.709, as
++	// players do (and as the GLES2 renderer does, see render/egl.c).
++	enum wlr_color_encoding encoding =
++		(output_state->committed & WLR_OUTPUT_STATE_BUFFER) && output_state->buffer != NULL &&
++		output_state->buffer->height >= 720 ? WLR_COLOR_ENCODING_BT709 : WLR_COLOR_ENCODING_BT601;
+ 	enum wlr_color_range range = WLR_COLOR_RANGE_LIMITED;
+ 	if (output_state->committed & WLR_OUTPUT_STATE_COLOR_REPRESENTATION) {
+ 		encoding = wlr_color_representation_v1_color_encoding_to_wlr(
+diff -ru a/include/backend/drm/properties.h b/include/backend/drm/properties.h
+--- a/include/backend/drm/properties.h	2026-10-21 17:34:51.656831611 -0500
++++ b/include/backend/drm/properties.h	2026-10-21 17:34:51.722863347 -0500
+@@ -77,10 +77,12 @@
+ 	WLR_DRM_COLOR_YCBCR_BT2020,
+ };
+ 
+-// Equivalent to wlr_drm_color_range defined in the kernel (but not exported)
++// Equivalent to drm_color_range defined in the kernel (but not exported), in
++// the same order: limited is 0. In the other order, every "limited" plane went
++// out as full range and the other way about.
+ enum wlr_drm_color_range {
+-	WLR_DRM_COLOR_YCBCR_FULL_RANGE,
+ 	WLR_DRM_COLOR_YCBCR_LIMITED_RANGE,
++	WLR_DRM_COLOR_YCBCR_FULL_RANGE,
+ };
+ 
+ bool get_drm_connector_props(int fd, uint32_t id,
+diff -ru a/render/egl.c b/render/egl.c
+--- a/render/egl.c	2026-10-21 17:34:51.670151244 -0500
++++ b/render/egl.c	2026-10-21 17:34:51.730606550 -0500
+@@ -851,6 +851,14 @@
+ 		}
+ 	}
+ 
++	// Without colour information, YUV video of HD size is taken to be BT.709, as
++	// players do (and as the DRM backend does when it scans such a buffer out).
++	if ((color_repr == NULL || color_repr->coefficients == 0) && attributes->height >= 720 &&
++			attributes->n_planes > 1) {
++		attribs[atti++] = EGL_YUV_COLOR_SPACE_HINT_EXT;
++		attribs[atti++] = EGL_ITU_REC709_EXT;
++	}
++
+ 	// Our clients don't expect our usage to trash the buffer contents
+ 	attribs[atti++] = EGL_IMAGE_PRESERVED_KHR;
+ 	attribs[atti++] = EGL_TRUE;

@@ -1,0 +1,193 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tenfoot</title>
+<style>
+  /* The home screen (px at 1920x1080; home.js zooms if the screen isn't 1080p).
+     Top row in a glass dock over the focused app's own full-screen picture; Down to the grid moves the dock to the
+     top over a blurred wash. The glass is faked with pre-blurred copies of the photo (live blur is too much for the
+     Pi's GPU). Everything that moves is transform or opacity, so it composites without repainting. */
+  @font-face { font-family: "Inter"; font-weight: 100 900; src: url(fonts/Inter-opsz.woff2) format("woff2"); }
+  :root {
+    --sans: "Inter", "DejaVu Sans", sans-serif;
+    --fg2: rgb(235 235 245 / .6);  /* secondary label */
+    /* Apple's spring model (duration, bounce) as CSS curves: focus in, focus out, page moves, the edge bump */
+    --spring-in: linear(0, .02, .065, .131, .202, .278, .362, .437, .514, .581, .642, .701, .749, .795, .832, .864, .893, .916,
+      .936, .952, .964, .975, .983, .99, .995, .998, 1.001, 1.003, 1.004, 1.005, 1.005, 1.006, 1.005, 1.005, 1.005, 1.004, 1.004,
+      1.004, 1.003, 1.003, 1.002, 1.002, 1.002, 1.001, 1.001, 1.001, 1.001, 1.001, 1);
+    --spring-out: linear(0, .022, .073, .136, .212, .285, .363, .432, .502, .566, .62, .672, .714, .755, .788, .82, .847, .868,
+      .888, .904, .919, .931, .942, .951, .959, .965, .97, .975, .979, .982, .985, .988, .99, .991, .993, .994, .995, .996, .996,
+      .997, .997, .998, .998, .999, .999, .999, .999, .999, 1);
+    --spring-page: linear(0, .02, .064, .123, .19, .261, .332, .402, .467, .528, .584, .635, .683, .724, .76, .792, .82, .845,
+      .866, .885, .901, .915, .928, .938, .948, .955, .962, .968, .972, .976, .98, .983, .986, .988, .99, .991, .993, .994, .995,
+      .996, .996, .997, .997, .998, .998, .998, .999, .999, 1);
+    --spring-bump: linear(0, .031, .098, .198, .304, .424, .532, .633, .733, .812, .885, .939, .985, 1.017, 1.039, 1.055, 1.063,
+      1.066, 1.065, 1.061, 1.055, 1.048, 1.04, 1.033, 1.025, 1.019, 1.014, 1.009, 1.005, 1.002, .999, .998, .997, .996, .996, .996,
+      .996, .996, .997, .997, .998, .998, .999, .999, .999, 1, 1, 1, 1);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { width: 1920px; height: 1080px; }
+  body { margin: 0; overflow: hidden; background: radial-gradient(1600px 900px at 30% 20%, #26324a, #0b0e16 70%); color: #fff; font: 500 29px/36px var(--sans);
+         font-optical-sizing: auto; -webkit-font-smoothing: antialiased; }
+
+  /* ---------- The picture behind everything ---------- */
+  #photos, #photos img, #art, #wash { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  #photos { z-index: 0; }
+  /* will-change keeps each photo's own GPU layer ready, so a fade starts at once (measured: 51 -> 62 fps moving along
+     the dock); home.js keeps only a few photos around for the memory. */
+  #photos img { object-fit: cover; opacity: 0; transition: opacity .45s cubic-bezier(.25, .1, .25, 1); will-change: opacity; }
+  #photos img.on { opacity: 1; }
+  #photos img.slow { transition-duration: 1.6s; }
+  #photos img.now, #glass .g.now { transition: none; }  /* swapped under the grid's wash: one less big fade at once */
+  /* Spotify playing: its album art, stretched from a tiny canvas into a soft full-screen wash (Apple Music style). */
+  #art { opacity: 0; transition: opacity .45s; will-change: opacity; }
+  body.music #art { opacity: 1; }
+  /* The grid: a dark, blurred, saturated wash of the same picture. */
+  #wash { opacity: 0; transition: opacity .5s; will-change: opacity; }
+  #wash img { width: 100%; height: 100%; }
+  #wash::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / .5); }
+  body.grid #wash { opacity: 1; }
+  /* Darker under the dock, so it and the icons sit on something. */
+  #scrim { position: absolute; left: 0; top: 640px; width: 1920px; height: 440px; transition: opacity .3s; will-change: opacity;
+           background: linear-gradient(rgb(0 0 0 / 0), rgb(0 0 0 / .45) 40%, rgb(0 0 0 / .85)); }
+  body.grid #scrim { opacity: 0; }
+  /* With something in the shelf, a soft shade behind it so it reads on a bright photo. */
+  #scrim2 { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: 0; transition: opacity .3s; will-change: opacity;
+            background: radial-gradient(1500px 820px at 0 0, rgb(0 0 0 / .55), rgb(0 0 0 / .25) 50%, transparent 75%); }
+  body.shelf:not(.grid) #scrim2 { opacity: 1; }
+
+  /* ---------- Top shelf: the focused app's own content, top left ---------- */
+  #shelf { position: absolute; left: 88px; top: 75px; width: 1500px; transition: opacity .3s; will-change: opacity; }
+  #shelf.gone, body.grid #shelf { opacity: 0; }
+  .np { display: flex; gap: 40px; align-items: center; margin-top: 65px; }
+  .np img { width: 360px; height: 360px; border-radius: 12px; object-fit: cover; box-shadow: 0 24px 60px rgb(0 0 0 / .45); flex: none; }
+  .np .col { display: grid; gap: 10px; min-width: 0; max-width: 1000px; }
+  .np .eyebrow { color: var(--fg2); letter-spacing: .01em; }
+  .np .title { font: 700 57px/66px var(--sans); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .np .artist { font: 400 38px/46px var(--sans); color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np .bar { width: 480px; height: 4px; border-radius: 2px; background: rgb(255 255 255 / .25); overflow: hidden; margin-top: 18px; }
+  .np .bar b { display: block; height: 100%; background: #fff; transform-origin: left; transform: scaleX(0);
+               transition: transform 1s linear; will-change: transform; }
+  .hint1 { color: var(--fg2); }
+
+  /* ---------- Clock capsule, top right (Liquid Glass) ---------- */
+  #clock { position: absolute; right: 50px; top: 50px; height: 59px; display: flex; align-items: center; gap: 14px;
+           padding: 0 5px 0 24px; border-radius: 30px; font: 500 25px/32px var(--sans); font-variant-numeric: tabular-nums;
+           background: rgb(30 30 34 / .42); transition: opacity .4s;
+           box-shadow: inset 0 1.5px 0 rgb(255 255 255 / .32), inset 0 0 0 1.5px rgb(255 255 255 / .1), 0 8px 24px rgb(0 0 0 / .2); }
+  #clock b { width: 49px; height: 49px; border-radius: 50%; display: grid; place-items: center; font: 600 19px var(--sans);
+             background: linear-gradient(#5ac8fa, #0a84ff); box-shadow: inset 0 1px 0 rgb(255 255 255 / .35); }
+  #clock b:empty { display: none; }
+  #clock:has(b:empty) { padding-right: 24px; }
+
+  /* ---------- "Press up for full screen" ---------- */
+  #hint { position: absolute; left: 0; width: 1920px; top: 708px; display: grid; justify-items: center; gap: 4px;
+          font: 500 23px/30px var(--sans); color: rgb(255 255 255 / .7); transition: opacity .3s; }
+  #hint svg { width: 28px; height: 10px; }
+  body.grid #hint { opacity: 0; }
+
+  /* ---------- The dock (top row) and the grid below it ---------- */
+  #dock, #rows { position: absolute; left: 0; top: 0; width: 1920px; will-change: transform;
+                 transition: transform .82s var(--spring-page); }
+  body.grid #dock { transform: translateY(-724px); }
+  body.grid #rows { transform: translateY(-692px); }
+  /* The glass: the photo's blurred copies (and Spotify's art) in a stack, each layer rounding its own corners. Clipping
+     them together instead made the Pi redraw the whole stack every frame (56 -> 59 fps moving along the dock). */
+  #glass, #tint { position: absolute; left: 50px; top: 785px; width: 1820px; height: 228px; border-radius: 64px; }
+  #glass { z-index: 0; box-shadow: 0 10px 30px rgb(0 0 0 / .25); }  /* z-index: its pictures stack inside it */
+  /* each photo's blurred copy, cut to the dock's own size and lined up with the photo behind it */
+  #glass .g { position: absolute; inset: 0; border-radius: inherit; opacity: 0; background: -50px -785px / 1920px 1080px no-repeat;
+              transition: opacity .45s cubic-bezier(.25, .1, .25, 1); will-change: opacity; }
+  #glass .g.on { opacity: 1; }
+  #glass canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; z-index: 2147483647;
+                  opacity: 0; transition: opacity .45s; }
+  body.music #glass canvas { opacity: 1; }
+  body.grid #glass .g, body.grid #glass canvas { opacity: 0; }  /* in the grid the glass is clear over the wash */
+  /* tint and rim on top, the same in both states: animating it between states repainted it every frame (45 fps) */
+  #tint { background: linear-gradient(rgb(255 255 255 / .06), rgb(255 255 255 / .06)), rgb(20 20 22 / .28);
+                  box-shadow: inset 0 1.5px 0 rgb(255 255 255 / .42), inset 0 0 0 1.5px rgb(255 255 255 / .12); }
+
+  /* An icon: 250x150 at rest, 303x182 focused (Apple's x1.21). Drawn at the focused size and shrunk at rest, so the
+     focused one is pixel-sharp. Focus lifts it, lights its rim and drops a soft shadow; resting, it gently sways. */
+  .tile { position: absolute; width: 250px; height: 150px; outline: none; transition: opacity .6s; }
+  .tile:focus { z-index: 2; }
+  .lift { position: absolute; left: -26.5px; top: -16px; width: 303px; height: 182px; transform: scale(.825);
+          transition: transform .55s var(--spring-out); will-change: transform; }
+  .tile:focus .lift { transform: scale(1); transition: transform .59s var(--spring-in); }
+  .shadow { position: absolute; inset: 8px 10px 0; border-radius: 32px; box-shadow: 0 22px 40px rgb(0 0 0 / .45); opacity: 0;
+            transition: opacity .3s; will-change: opacity; }
+  .tile:focus .shadow { opacity: 1; }
+  .sway, .sway2 { position: absolute; inset: 0; }
+  .icon { position: absolute; inset: 0; border-radius: 32px; overflow: hidden; background: linear-gradient(160deg, color-mix(in srgb, var(--c) 82%, #fff), var(--c) 60%, color-mix(in srgb, var(--c) 72%, #000));
+          display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; box-sizing: border-box;
+          font: 650 31px/1.1 var(--sans); letter-spacing: -.4px; color: #fff; text-shadow: 0 1px 3px rgb(0 0 0 / .35);
+          box-shadow: 0 7px 17px rgb(0 0 0 / .28); }
+  .icon::before { content: ""; position: absolute; inset: 0; border-radius: inherit; opacity: 0; transition: opacity .3s;
+                  background: radial-gradient(120% 90% at 30% 0%, rgb(255 255 255 / .24), transparent 55%);
+                  box-shadow: inset 0 1.5px 0 rgb(255 255 255 / .55), inset 0 0 0 1.5px rgb(255 255 255 / .22); }
+  .tile:focus .icon::before { opacity: 1; }
+  .label { position: absolute; left: -100px; right: -100px; top: 182px; text-align: center; font: 500 29px/36px var(--sans);
+           letter-spacing: .01em; color: rgb(255 255 255 / .92); white-space: nowrap; opacity: 0; transition: opacity .2s; }
+  body.grid .tile.inrow:focus .label { opacity: 1; transition: opacity .2s .12s; }
+  /* Resting on one: it sways a little, and after a few seconds everything else dims (tvOS). */
+  body.rest .tile:focus .sway { animation: swayY 6.2s ease-in-out infinite; }
+  body.rest .tile:focus .sway2 { animation: swayX 4.6s ease-in-out infinite; }
+  @keyframes swayY { 0%, 100% { transform: perspective(900px) rotateY(-3deg); } 50% { transform: perspective(900px) rotateY(3deg); } }
+  @keyframes swayX { 0%, 100% { transform: perspective(900px) rotateX(2deg); } 50% { transform: perspective(900px) rotateX(-2deg); } }
+  body.dim .tile:not(:focus) { opacity: .6; }
+  body.dim .tile:focus .lift { transform: scale(1.033); }
+  /* Running into an edge: a short bump that way. */
+  .tile.bump .lift { animation: bump .45s var(--spring-bump); }
+  @keyframes bump { 22% { transform: translate(var(--bx), var(--by)) rotate(var(--br)); } 100% { transform: scale(1); } }
+
+  /* The phone remote's QR: always on screen, under the clock (the only way in for a guest's phone). In the grid,
+     where the dock takes the top, it moves down to the empty bottom corner. */
+  #rq { position: absolute; right: 50px; top: 130px; display: grid; justify-items: center; gap: 10px;
+        transition: transform .82s var(--spring-page); will-change: transform; }
+  #rq img { width: 150px; height: 150px; border-radius: 20px; background: #fff; padding: 10px;
+            box-shadow: 0 10px 30px rgb(0 0 0 / .3), inset 0 0 0 1px rgb(0 0 0 / .06); }
+  #rq span { font: 500 23px/30px var(--sans); color: #fff; text-shadow: 0 1px 8px rgb(0 0 0 / .45); }
+  body.grid #rq { transform: translateY(700px); }
+
+  /* ---------- Full screen (Up from the dock) and the screensaver: just the picture ---------- */
+  #home, #rows { transition: opacity .6s, transform .82s var(--spring-page); }
+  body.full #home, body.idle #home, body.full #rows, body.idle #rows { opacity: 0; }
+  #dock { transition: opacity .6s, transform .82s var(--spring-page); }
+  body.full #dock, body.idle #dock { transform: translateY(260px); opacity: 0; }
+  body.idle #clock, body.grid #clock { opacity: 0; }
+  body.full #art, body.idle #art { opacity: 0; }  /* just the photo, matching the place named under it */
+  #place { position: absolute; left: 88px; bottom: 96px; display: grid; gap: 6px; opacity: 0; transition: opacity .8s;
+           text-shadow: 0 2px 16px rgb(0 0 0 / .35); pointer-events: none; }  /* a label: a click goes to the tile under it */
+  #place b { font: 600 38px/46px var(--sans); }
+  #place span { font: 500 25px/32px var(--sans); color: rgb(255 255 255 / .7); }
+  body.showplace #place { opacity: 1; }
+  body.idle #photos img { transition-duration: 2s; }
+  #photos img.kb { animation: kb 32s linear forwards; }
+  body.idle #wash { opacity: 0; }  /* asleep in the grid: still the photos, not the grid's backdrop */
+  @keyframes kb { from { transform: scale(1); } to { transform: scale(1.08) translate(var(--kx, 0), var(--ky, 0)); } }
+
+  /* OK: the icon swells and the home fades while the app loads. */
+  body.launch #home, body.launch #photos, body.launch #art, body.launch #wash, body.launch #clock, body.launch #glass,
+  body.launch #tint, body.launch #rq, body.launch .tile:not(:focus) { opacity: 0; transition: opacity .35s; }
+  body.launch .tile:focus .lift { transform: scale(1.6); opacity: 0; transition: transform .45s ease-out, opacity .45s; }
+  @media (prefers-reduced-motion: reduce) { .sway, .sway2, .tile.bump .lift { animation: none !important; } }
+</style>
+
+<div id="photos"></div>
+<canvas id="art" width="192" height="108"></canvas>
+<div id="wash"><img alt=""></div>
+<div id="home">
+  <div id="scrim"></div><div id="scrim2"></div>
+  <div id="shelf" class="gone"></div>
+  <div id="hint"><svg viewBox="0 0 28 10"><path d="M2 8.5 14 2l12 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Press up for full screen</div>
+</div>
+<div id="rows"></div>
+<div id="dock"><div id="glass"><canvas id="art2" width="182" height="23"></canvas></div><div id="tint"></div></div>
+<div id="place"><b></b><span></span></div>
+<div id="clock"><span id="time"></span><b id="temp"></b></div>
+<div id="rq" hidden><img alt=""><span>Phone remote</span></div>
+
+<script src="run/config.js"></script>
+<script src="wallpapers.js"></script>
+<script src="nav.js"></script>
+<script src="home.js"></script>

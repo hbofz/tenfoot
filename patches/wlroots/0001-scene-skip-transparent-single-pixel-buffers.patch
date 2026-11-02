@@ -1,0 +1,26 @@
+scene: skip transparent single-pixel buffers when rendering
+
+Chromium (overlay delegation) puts an rgba(0,0,0,0) single-pixel buffer under its window. It draws
+nothing, but as a render-list entry it stops the window's own buffer from being scanned out.
+
+--- a/types/scene/wlr_scene.c	2026-10-21 11:17:52.300842067 -0500
++++ b/types/scene/wlr_scene.c	2026-10-21 11:17:52.316841991 -0500
+@@ -1958,6 +1958,18 @@
+ 		}
+ 	}
+ 
++	// A fully transparent single-pixel buffer draws nothing. Chromium puts one
++	// under its window when it delegates overlays; rendering it would leave
++	// two nodes and stop the window's own buffer from being scanned out.
++	if (node->type == WLR_SCENE_NODE_BUFFER) {
++		struct wlr_scene_buffer *scene_buffer = wlr_scene_buffer_from_node(node);
++
++		if (scene_buffer->is_single_pixel_buffer &&
++				scene_buffer->single_pixel_buffer_color[3] == 0) {
++			return false;
++		}
++	}
++
+ 	pixman_region32_t intersection;
+ 	pixman_region32_init(&intersection);
+ 	pixman_region32_intersect_rect(&intersection, &node->visible,

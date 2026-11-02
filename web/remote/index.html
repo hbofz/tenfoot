@@ -1,0 +1,653 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tenfoot">
+<meta name="theme-color" content="#0b0d12">
+<title>Tenfoot Remote</title>
+<style>
+  /* One screen, no scrolling: what's on the TV, the music, the apps, a big touch surface
+     (swipe like an Apple TV remote, or a mouse for websites), then the buttons. Typing and
+     settings open as sheets. The touch surface glows in the colour of the app on the TV,
+     like the TV's own home screen. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d12; --surface: #151922; --raised: #1c212c; --press: #2a3140; --line: rgb(255 255 255 / .07);
+    --fg: #f3f5f9; --muted: #8a93a8; --dim: #5b6478; --danger: #ff4d4d;
+    --app: #8a93a8;  /* the app on the TV */
+    --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body {
+    margin: 0; position: fixed; inset: 0; background: var(--bg); color: var(--fg); font: 15px/1.3 var(--ui);
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    padding: max(10px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  button { font: inherit; color: inherit; background: var(--surface); border: 0; padding: 0; cursor: pointer;
+           touch-action: manipulation; transition: transform .12s, background-color .12s; }
+  button:active, button.down { background: var(--press); transform: scale(.96); }
+  button:disabled { opacity: .45; }
+  button:focus-visible { outline: 2px solid color-mix(in srgb, var(--app) 50%, transparent); outline-offset: 2px; }
+  svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .fill { fill: currentColor; stroke: none; }
+
+  /* Header: what the TV shows, settings, power */
+  header { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+  .now { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--app); flex: none;
+         box-shadow: 0 0 12px var(--app); transition: background-color .4s, box-shadow .4s; }
+  .now small { display: block; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .now b { display: block; font-size: 19px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body.off .dot { background: var(--danger); box-shadow: 0 0 12px var(--danger); }
+  .round { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+  #power.on { color: #3ddc84; }
+  #power.armed { background: var(--danger); color: #fff; }
+
+  /* Now playing */
+  #music { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center;
+           background: var(--surface); border-radius: 18px; padding: 10px 12px 10px 10px; }
+  #art { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; background: var(--raised); }
+  .meta { min-width: 0; text-align: left; background: none; }
+  .meta:active { background: none; }
+  .meta b, .meta > span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta b { font-size: 15px; font-weight: 650; }
+  .meta > span { font-size: 13px; color: var(--muted); }
+  .bar { height: 3px; border-radius: 2px; background: var(--line); margin-top: 8px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--fg); transform-origin: left; transform: scaleX(0); transition: transform .25s linear; }
+  .meta .times { display: flex; color: var(--dim); font-size: 11px; justify-content: space-between; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; margin-top: 3px; }
+  .mctl { display: flex; gap: 2px; }
+  .mctl button { width: 40px; height: 44px; border-radius: 12px; background: none; display: grid; place-items: center; }
+  .mctl button:active { background: var(--raised); }
+  .mctl svg { width: 20px; height: 20px; }
+  .mctl .pp svg { width: 26px; height: 26px; }
+
+  /* Apps */
+  #apps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  #apps button { height: 44px; border-radius: 14px; font-size: 11px; font-weight: 600; display: flex;
+                 flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px solid transparent; }
+  #apps button::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+  #apps button.here { background: color-mix(in srgb, var(--c) 16%, var(--surface)); border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+
+  /* Touch surface */
+  #pad { position: relative; flex: 1; container-type: size; --r: min(17cqw, 19cqh, 70px);  /* OK ring radius */ min-height: 190px; border-radius: 28px; overflow: hidden; touch-action: none;
+         border: 1px solid var(--line);
+         background: radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--app) 16%, transparent), transparent 70%), var(--surface);
+         transition: background .6s; }
+  .seg { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex;
+         background: rgb(0 0 0 / .35); border-radius: 999px; padding: 3px; }
+  .seg button { background: none; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: rgb(255 255 255 / .14); color: var(--fg); }
+  .seg button:active { transform: none; }
+  .ring { position: absolute; inset: 0; pointer-events: none; }
+  .ring .ok { position: absolute; left: 50%; top: 50%; width: calc(2 * var(--r)); aspect-ratio: 1; transform: translate(-50%, -50%);
+              border-radius: 50%; border: 1.5px solid rgb(255 255 255 / .10); background: rgb(255 255 255 / .03);
+              display: grid; place-items: center; font-size: 13px; font-weight: 700; letter-spacing: .1em; color: var(--dim);
+              transition: background-color .25s, color .25s; }
+  .ring svg { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; color: var(--dim); transition: color .25s; }
+  .ring svg { transform: translate(-50%, -50%); }
+  .ring [data-k="up"] { top: calc(50% - var(--r) - 24px); }
+  .ring [data-k="down"] { top: calc(50% + var(--r) + 24px); transform: translate(-50%, -50%) rotate(180deg); }
+  .ring [data-k="left"] { left: 11%; transform: translate(-50%, -50%) rotate(-90deg); }
+  .ring [data-k="right"] { left: 89%; transform: translate(-50%, -50%) rotate(90deg); }
+  .ring .hit { color: var(--fg); transition: none; }
+  .ring .ok.hit { background: rgb(255 255 255 / .16); }
+  #pad[data-mode="mouse"] .ring { display: none; }
+  @container (max-height: 250px) { .hint { display: none; } }
+  .hint { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: var(--dim); pointer-events: none; }
+  .ripple { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%;
+            background: rgb(255 255 255 / .16); pointer-events: none; animation: ripple .5s ease-out forwards; }
+  @keyframes ripple { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
+
+  /* Buttons */
+  .keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .key { height: 58px; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; }
+  .key span { font-size: 11px; color: var(--muted); }
+  .vol { grid-column: span 3; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; background: var(--surface); border-radius: 18px; overflow: hidden; }
+  .vol button { height: 58px; background: none; display: grid; place-items: center; border-radius: 0; }
+  .vol button:active, .vol button.down { background: var(--press); transform: none; }
+  .vol span { font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+
+  #toast { position: fixed; left: 50%; bottom: calc(150px + env(safe-area-inset-bottom)); transform: translate(-50%, 8px); z-index: 10;
+           max-width: calc(100% - 32px); background: #262c39; color: var(--fg); font-size: 14px; padding: 10px 16px; border-radius: 14px;
+           box-shadow: 0 8px 30px rgb(0 0 0 / .5); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; text-align: center; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* Sheets */
+  dialog { border: 0; padding: 0; margin: 0; width: 100%; max-width: 520px; left: 0; right: 0; margin-inline: auto;
+           background: var(--raised); color: var(--fg); max-height: 85dvh; }
+  dialog::backdrop { background: rgb(0 0 0 / .55); }
+  dialog.bottom { top: auto; bottom: 0; border-radius: 24px 24px 0 0; }
+  dialog.top { top: 0; bottom: auto; border-radius: 0 0 24px 24px; }
+  .sheet { padding: 18px 16px max(18px, env(safe-area-inset-bottom)); display: grid; gap: 12px; overflow-y: auto; max-height: 85dvh; }
+  dialog.top .sheet { padding-top: max(18px, env(safe-area-inset-top)); }
+  .sheet header { min-height: 0; }
+  .sheet h2 { flex: 1; margin: 0; font-size: 20px; }
+  .done { background: none; color: var(--app); font-weight: 650; padding: 8px 4px; }
+  .done:active { background: none; }
+  .sheet h3 { margin: 8px 0 0; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .note { margin: -4px 2px 0; font-size: 13px; color: var(--muted); }
+  form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 0; }
+  input { font: inherit; font-size: 17px; color: inherit; background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+          padding: 13px 14px; min-width: 0; user-select: text; -webkit-user-select: text; }
+  input:focus { outline: none; border-color: color-mix(in srgb, var(--app) 60%, transparent); }
+  form button, .pill { border-radius: 14px; padding: 0 16px; font-weight: 600; min-height: 48px; }
+  #accts { display: grid; gap: 8px; }
+  .acct { display: flex; align-items: center; gap: 8px; }
+  .acct > button:first-child { flex: 1; text-align: left; padding: 0 14px; min-height: 48px; border-radius: 14px; font-weight: 600; }
+  .acct .on { color: #1ed760; }
+  .acct .x { width: 48px; height: 48px; border-radius: 14px; color: var(--muted); }
+  .acct .locked { opacity: .5; }
+  .row2 { display: flex; gap: 8px; }
+  .row2 .pill { flex: 1; }
+  .add { color: #1ed760; }
+  #sync { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+  #sync b { font-variant-numeric: tabular-nums; min-width: 5em; text-align: center; }
+  details { font-size: 14px; color: var(--muted); background: var(--surface); border-radius: 14px; padding: 12px 14px; }
+  details summary { color: var(--fg); font-weight: 600; }
+  details b { color: var(--fg); }
+  details ol { padding-left: 20px; }
+
+  @media (max-height: 640px) { .key, .vol button { height: 50px; } #pad { min-height: 160px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></symbol>
+  <symbol id="i-pp" viewBox="0 0 24 24"><path class="fill" d="M3 5.5v13l10-6.5z"/><path d="M16 6v12M20.5 6v12"/></symbol>
+  <symbol id="i-kbd" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7.5 14h9"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/><path d="M12 2v10"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path class="fill" d="M20 5v14L9 12zM4 5h2.5v14H4z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path class="fill" d="M4 5v14l11-7zM17.5 5H20v14h-2.5z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path class="fill" d="M7 4.5v15l12.5-7.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path class="fill" d="M6 4.5h4.2v15H6zM13.8 4.5H18v15h-4.2z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+</svg>
+
+<header>
+  <div class="now"><i class="dot"></i><div><small id="nowLabel">Tenfoot</small><b id="nowName">Connecting…</b></div></div>
+  <button class="round" id="gear" aria-label="Settings"><svg><use href="#i-gear"/></svg></button>
+  <button class="round" id="power" aria-label="TV power"><svg><use href="#i-power"/></svg></button>
+</header>
+
+<section id="music" hidden>
+  <img id="art" alt="">
+  <button class="meta" id="meta" aria-label="Show Spotify on the TV">
+    <b id="song"></b><span id="artist"></span>
+    <span class="bar"><i id="prog"></i></span>
+    <span class="times"><span id="tNow">0:00</span><span id="tEnd">0:00</span></span>
+  </button>
+  <div class="mctl">
+    <button data-music="prev" aria-label="Previous"><svg><use href="#i-prev"/></svg></button>
+    <button data-music="playpause" class="pp" aria-label="Play or pause"><svg><use id="ppIcon" href="#i-pause"/></svg></button>
+    <button data-music="next" aria-label="Next"><svg><use href="#i-next"/></svg></button>
+  </div>
+</section>
+
+<nav id="apps"></nav>
+
+<div id="pad" data-mode="swipe">
+  <div class="seg"><button data-mode="swipe" aria-pressed="true">Swipe</button><button data-mode="mouse" aria-pressed="false">Mouse</button></div>
+  <div class="ring">
+    <div class="ok" data-k="ok">OK</div>
+    <svg data-k="up"><use href="#i-chev"/></svg><svg data-k="down"><use href="#i-chev"/></svg>
+    <svg data-k="left"><use href="#i-chev"/></svg><svg data-k="right"><use href="#i-chev"/></svg>
+  </div>
+  <div class="hint" id="hint">Swipe to move · tap OK to select</div>
+</div>
+
+<div class="keys">
+  <button class="key" data-cmd='{"a":"back"}'><svg><use href="#i-back"/></svg><span>Back</span></button>
+  <button class="key" data-cmd='{"a":"home"}'><svg><use href="#i-home"/></svg><span>Home</span></button>
+  <button class="key" data-cmd='{"a":"key","k":"playpause"}'><svg><use href="#i-pp"/></svg><span>Play</span></button>
+  <button class="key" id="kbdBtn"><svg><use href="#i-kbd"/></svg><span>Type</span></button>
+  <button class="key" data-cmd='{"a":"tv","k":"mute"}'><svg><use href="#i-mute"/></svg><span>Mute</span></button>
+  <div class="vol">
+    <button data-hold="voldown" aria-label="Volume down"><svg><use href="#i-minus"/></svg></button>
+    <span>Volume</span>
+    <button data-hold="volup" aria-label="Volume up"><svg><use href="#i-plus"/></svg></button>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<dialog id="kbd" class="top"><div class="sheet">
+  <header><h2>Keyboard</h2><button class="done" data-close>Done</button></header>
+  <form id="typeForm"><input id="typed" placeholder="Type here, it shows on the TV" autocomplete="off" autocorrect="off"
+    autocapitalize="off" spellcheck="false" enterkeyhint="send"><button>Enter</button></form>
+  <p class="note">Pick a text box on the TV first. Letters appear as you type.</p>
+  <h3>Open on the TV</h3>
+  <form id="openForm"><input id="url" placeholder="Link or search" autocomplete="off" autocorrect="off"
+    autocapitalize="off" spellcheck="false" inputmode="url" enterkeyhint="go"><button>Open</button></form>
+  <p class="note">YouTube links play in the TV app.</p>
+</div></dialog>
+
+<dialog id="settings" class="bottom"><div class="sheet">
+  <header><h2>Settings</h2><button class="done" data-close>Done</button></header>
+  <h3>Spotify on the TV</h3>
+  <div id="accts"></div>
+  <div class="row2" id="acctBtns"></div>
+  <h3>Lyrics timing</h3>
+  <div id="sync"></div>
+  <p class="note">Nudge if the lyrics run ahead of or behind the music.</p>
+  <h3>Help</h3>
+  <details><summary>Cast from your phone's YouTube app</summary>
+    <p>Works from anywhere, no shared Wi-Fi needed. Link your phone once:</p>
+    <ol><li>On the TV, open <b>YouTube</b>, then <b>Settings</b> &rarr; <b>Link with TV code</b>.</li>
+        <li>On your phone, in the YouTube app, tap <b>Cast</b> &rarr; <b>Link with TV code</b> and type the code.</li></ol>
+    <p>After that the Cast button plays and queues videos on the TV, like a Chromecast.</p>
+  </details>
+</div></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Name and colour per screen; the apps themselves (and which are made for a pointer, not arrow keys)
+// come from the TV's own list, home/apps.js, so a new app shows up here by itself.
+const APPS = { home: ["Home screen", "#c9d1e0"], asleep: ["Asleep", "#5b6478"] };
+const MOUSE_APPS = [];
+
+// Haptic tick: Android vibrates; iPhone (iOS 18+) ticks when a switch is toggled.
+const hap = Object.assign(document.createElement("label"), { hidden: true, innerHTML: '<input type="checkbox" switch>' });
+document.body.append(hap);
+const tick = () => { if (!(navigator.vibrate && navigator.vibrate(8))) hap.click(); };
+
+let toastTimer;
+function toast(msg, ms = 2600) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+class Expired extends Error {}
+async function api(cmd) {
+  const r = await fetch("api", { method: "POST", body: JSON.stringify(cmd) });
+  const text = await r.text();
+  if (r.status === 404) throw new Expired("This link has expired. Scan the QR code on the TV again.");
+  if (!r.ok) throw new Error(text || "The TV said no");
+  return text === "ok" ? null : JSON.parse(text);
+}
+function why(e) {
+  return e instanceof TypeError ? "Can't reach the TV. Check your internet, or toggle Airplane mode." : e.message;
+}
+
+// Everything goes out one at a time, in order, so a slow link never reorders keys and clicks.
+let chain = Promise.resolve();
+function send(cmd) {
+  const p = chain.then(() => api(cmd));
+  chain = p.catch(() => {});
+  p.catch((e) => toast(why(e)));
+  return p;
+}
+
+// ---- What the TV shows ----
+let app = null, power = null, powerSetAt = 0, music = null, musicAt = 0;
+async function poll() {
+  try {
+    render(await api({ a: "state" }));
+    loadApps();
+    document.body.classList.remove("off");
+  } catch (e) {
+    document.body.classList.add("off");
+    $("nowLabel").textContent = e instanceof Expired ? "Link expired" : "Offline";
+    $("nowName").textContent = e instanceof Expired ? "Scan the TV's QR code" : "Can't reach the TV";
+  }
+  clearTimeout(poll.t);
+  poll.t = setTimeout(poll, document.hidden ? 15000 : 2000);
+}
+document.addEventListener("visibilitychange", () => document.hidden || poll());
+
+function render(s) {
+  if (s.app !== app) {
+    app = s.app;
+    override = null;  // a new app picks its own touch mode again
+    setMode(MOUSE_APPS.includes(app) ? "mouse" : "swipe");
+  }
+  const [name, color] = APPS[app] || ["Tenfoot", "#8a93a8"];
+  document.documentElement.style.setProperty("--app", color);
+  $("nowLabel").textContent = "On the TV";
+  $("nowName").textContent = app === "web" && s.host ? s.host : name;
+  document.querySelectorAll("#apps button").forEach((b) => b.classList.toggle("here", b.dataset.app === app));
+  if (Date.now() - powerSetAt > 45000) power = s.power;  // the TV is only asked every 20 s
+  $("power").classList.toggle("on", power === "on");
+  renderMusic(s.music);
+}
+
+function renderMusic(m) {
+  music = m;
+  musicAt = performance.now();
+  $("music").hidden = !m;
+  if (!m) return;
+  $("song").textContent = m.name || "";
+  $("artist").textContent = m.artist || "";
+  if (m.art && $("art").src !== m.art) $("art").src = m.art;
+  $("ppIcon").setAttribute("href", m.paused ? "#i-play" : "#i-pause");
+  progress();
+}
+const clock = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+function progress() {
+  if (!music || !music.dur) return;
+  const pos = Math.min(music.dur, (music.pos || 0) + (music.paused ? 0 : performance.now() - musicAt));
+  $("prog").style.transform = `scaleX(${pos / music.dur})`;
+  $("tNow").textContent = clock(pos);
+  $("tEnd").textContent = "-" + clock(music.dur - pos);
+}
+setInterval(progress, 250);
+
+document.querySelectorAll("[data-music]").forEach((b) => b.addEventListener("click", () => {
+  tick();
+  if (b.dataset.music === "playpause" && music) renderMusic({ ...music, paused: !music.paused, pos: music.pos + (music.paused ? 0 : performance.now() - musicAt) });
+  send({ a: "spotify", k: b.dataset.music }).then(() => setTimeout(poll, 600), () => {});
+}));
+$("meta").addEventListener("click", () => { if (app !== "spotify") { tick(); send({ a: "app", k: "spotify" }).then(poll, () => {}); } });
+
+let appsLoading = false;
+function loadApps() {  // also retried from poll(), so a failed first try (TV restarting) doesn't leave the row empty
+  if (appsLoading || $("apps").children.length) return;
+  appsLoading = true;
+  api({ a: "apps" }).then((list) => {
+    for (const x of list) {
+      APPS[x.id] = [x.name, x.color];
+      if (x.mouse) MOUSE_APPS.push(x.id);
+      const b = Object.assign(document.createElement("button"), { textContent: x.name });
+      b.dataset.app = x.id;
+      b.style.setProperty("--c", x.color);
+      $("apps").append(b);
+    }
+    poll();  // redraw the header now that every app has a name
+  }, () => {}).finally(() => (appsLoading = false));
+}
+loadApps();
+$("apps").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-app]");
+  if (!b) return;
+  tick();
+  toast(`Opening ${APPS[b.dataset.app][0]}…`, 1500);
+  send({ a: "app", k: b.dataset.app }).then(() => setTimeout(poll, 800), () => {});
+});
+
+// Power: one tap turns the TV on; turning it off takes a second tap, since people may be watching.
+let armed = 0;
+$("power").addEventListener("click", () => {
+  tick();
+  const btn = $("power");
+  if (power === "on" && Date.now() - armed > 3000) {
+    armed = Date.now();
+    btn.classList.add("armed");
+    toast("Tap again to turn the TV off", 3000);
+    return setTimeout(() => btn.classList.remove("armed"), 3000);
+  }
+  const k = power === "on" ? "off" : "on";
+  armed = 0;
+  btn.classList.remove("armed");
+  toast(k === "on" ? "Turning the TV on…" : "Turning the TV off…");
+  send({ a: "tv", k }).then(() => { power = k === "on" ? "on" : "standby"; powerSetAt = Date.now(); btn.classList.toggle("on", power === "on"); }, () => {});
+});
+
+// ---- Buttons ----
+document.querySelectorAll("[data-cmd]").forEach((b) => b.addEventListener("click", () => {
+  tick();
+  send(JSON.parse(b.dataset.cmd)).catch(() => {});
+}));
+
+// Held buttons repeat, each press once the last one landed (so nothing queues up behind a finger).
+function holdable(el, fire) {
+  let on = false;
+  el.addEventListener("pointerdown", async (e) => {
+    e.preventDefault();
+    if (on) return;
+    on = true;
+    el.classList.add("down");
+    tick();
+    try {
+      await fire();
+      await sleep(350);
+      while (on) { await fire(); await sleep(60); }
+    } catch { on = false; }
+  });
+  for (const t of ["pointerup", "pointercancel", "pointerleave"]) el.addEventListener(t, () => { on = false; el.classList.remove("down"); });
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+}
+document.querySelectorAll("[data-hold]").forEach((b) => holdable(b, () => send({ a: "tv", k: b.dataset.hold })));
+
+// ---- Touch surface ----
+const pad = $("pad");
+let mode = "swipe", override = null;
+function setMode(m) {
+  mode = m;
+  pad.dataset.mode = m;
+  pad.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  $("hint").textContent = m === "mouse" ? "Drag to move · tap to click · two fingers to scroll"
+                                        : "Swipe to move · tap OK to select";
+}
+pad.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { tick(); override = b.dataset.mode; setMode(override); }));
+
+const STEP = 44;  // px of swipe per arrow press
+function zone(x, y) {
+  const r = pad.getBoundingClientRect(), dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
+  if (Math.hypot(dx, dy) < Math.min(r.width * 0.17, r.height * 0.19, 70)) return "ok";  // matches --r
+  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+}
+function flash(k) {
+  const el = pad.querySelector(`.ring [data-k="${k}"]`);
+  el.classList.add("hit");
+  clearTimeout(el.t);
+  el.t = setTimeout(() => el.classList.remove("hit"), 160);
+}
+function press(k) {
+  tick();
+  flash(k);
+  return send({ a: "key", k });
+}
+function ripple(x, y) {
+  const r = pad.getBoundingClientRect(), s = document.createElement("span");
+  s.className = "ripple";
+  s.style.left = x - r.left + "px";
+  s.style.top = y - r.top + "px";
+  s.onanimationend = () => s.remove();
+  pad.append(s);
+}
+
+let touch = null, mx = 0, my = 0, wheel = 0;
+pad.addEventListener("touchstart", (e) => {
+  if (e.target.closest(".seg")) return;
+  e.preventDefault();
+  const p = e.touches[0];
+  if (!touch) touch = { x: p.clientX, y: p.clientY, ox: p.clientX, oy: p.clientY, at: Date.now(), moved: 0, n: 0 };
+  touch.n = Math.max(touch.n, e.touches.length);
+  ripple(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+  const k = zone(p.clientX, p.clientY);
+  if (mode === "swipe" && e.touches.length === 1 && k !== "ok") {
+    const t = touch;
+    t.hold = setTimeout(async () => {  // finger resting on an edge: keep pressing that arrow
+      t.repeating = true;
+      while (t.repeating) { await press(k).catch(() => { t.repeating = false; }); await sleep(90); }
+    }, 450);
+  }
+}, { passive: false });
+
+pad.addEventListener("touchmove", (e) => {
+  if (!touch) return;
+  e.preventDefault();
+  const p = e.touches[0], dx = p.clientX - touch.x, dy = p.clientY - touch.y;
+  touch.x = p.clientX;
+  touch.y = p.clientY;
+  touch.moved += Math.abs(dx) + Math.abs(dy);
+  if (touch.moved > 10) clearTimeout(touch.hold);
+  if (mode === "mouse") {
+    if (e.touches.length >= 2) wheel += dy; else { mx += dx * 2; my += dy * 2; }
+    return flush();
+  }
+  if (touch.repeating) return;
+  const ox = touch.x - touch.ox, oy = touch.y - touch.oy;
+  if (Math.max(Math.abs(ox), Math.abs(oy)) >= STEP) {
+    press(Math.abs(ox) > Math.abs(oy) ? (ox > 0 ? "right" : "left") : (oy > 0 ? "down" : "up")).catch(() => {});
+    touch.ox = touch.x;
+    touch.oy = touch.y;
+    touch.swiped = true;
+  }
+}, { passive: false });
+
+function lift(e) {
+  if (!touch || e.touches.length) return;
+  const t = touch;
+  touch = null;
+  clearTimeout(t.hold);
+  if (t.repeating) return void (t.repeating = false);
+  if (e.type === "touchcancel" || t.swiped || t.moved >= 10 || Date.now() - t.at > 350) return;
+  if (mode === "mouse") {
+    tick();
+    flush(true);  // the moves before it go first
+    const c = { a: "click", button: t.n >= 2 ? "right" : "left" }, s = stream();
+    if (s) s.send(JSON.stringify(c)); else send(c).catch(() => {});
+  } else press(zone(t.x, t.y)).catch(() => {});
+}
+pad.addEventListener("touchend", lift);
+pad.addEventListener("touchcancel", lift);
+
+// Pointer moves, scrolls and clicks go out over one WebSocket the moment the finger moves, without
+// waiting for answers. If it can't connect: POSTs, one in flight at a time (a move per round trip).
+let ws = null, wsAt = 0;
+function stream() {
+  if ((!ws || ws.readyState > 1) && Date.now() - wsAt > 3000) {
+    wsAt = Date.now();
+    ws = new WebSocket(new URL("ws", location.href).href.replace(/^http/, "ws"));
+  }
+  return ws && ws.readyState === 1 ? ws : null;
+}
+stream();
+setInterval(() => stream()?.send("{}"), 10000);  // the TV drops a stream that's quiet for 20 s
+document.addEventListener("visibilitychange", () => document.hidden || stream());
+
+// Whole pixels only (the remainder waits for the next move), and while the network is behind
+// (force: a click is next) the moves add up instead of queueing.
+let moving = false;
+function flush(force) {
+  const dx = Math.round(mx), dy = Math.round(my), n = Math.trunc(wheel / 25), s = stream();
+  if (!dx && !dy && !n || !force && (s ? s.bufferedAmount > 1000 : moving)) return;
+  mx -= dx; my -= dy; wheel -= n * 25;
+  const cmds = [...(dx || dy ? [{ a: "move", dx, dy }] : []), ...(n ? [{ a: "scroll", n }] : [])];
+  if (s) return cmds.forEach((c) => s.send(JSON.stringify(c)));
+  moving = true;
+  Promise.all(cmds.map((c) => send(c).catch(() => {}))).then(() => { moving = false; });
+}
+(function each() { flush(); requestAnimationFrame(each); })();  // what built up while the network was behind
+
+// ---- Sheets ----
+for (const d of document.querySelectorAll("dialog")) {
+  d.addEventListener("click", (e) => { if (e.target === d || e.target.closest("[data-close]")) d.close(); });
+}
+
+// Keyboard: whatever is in the box is mirrored into the TV's focused text field, letter by letter.
+const typed = $("typed");
+let onTv = "", syncing = false;
+$("kbdBtn").addEventListener("click", () => {
+  tick();
+  typed.value = onTv = "";
+  $("kbd").showModal();
+  typed.focus();
+});
+async function mirror() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    while (typed.value !== onTv) {
+      const want = typed.value;
+      let i = 0;
+      while (i < want.length && i < onTv.length && want[i] === onTv[i]) i++;
+      if (onTv.length > i) {
+        const n = Math.min(50, onTv.length - i);
+        await api({ a: "key", k: "backspace", n });
+        onTv = onTv.slice(0, onTv.length - n);
+      } else {
+        await api({ a: "type", text: want.slice(i) });
+        onTv = want;
+      }
+    }
+  } catch (e) { toast(why(e)); }
+  syncing = false;
+}
+typed.addEventListener("input", () => { chain = chain.then(mirror); });
+$("typeForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  tick();
+  // send what's still typing first, then Enter; the TV usually clears its box after Enter
+  chain = chain.then(mirror).then(() => api({ a: "key", k: "enter" })).then(() => { typed.value = onTv = ""; }, (e) => toast(why(e)));
+});
+$("openForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = $("url").value.trim();
+  if (!v) return;
+  send({ a: "open", url: v }).then(() => setTimeout(poll, 800), () => {});
+  $("url").value = "";
+  $("kbd").close();
+  toast("Opening on the TV…", 1500);
+});
+
+// Settings: Spotify accounts saved on the Pi are encrypted with a key that only the phone that
+// added them keeps (here, in this browser). This phone can only switch to accounts it holds a key for.
+const KEYS = "tenfootSpotifyKeys";
+// { key id: key }. The service gives the id, because a plain-HTTP page has no browser crypto to work it out.
+const myKeys = () => { try { return JSON.parse(localStorage.getItem(KEYS) || "{}"); } catch { return {}; } };
+function keepKey({ keyid, key }) {
+  try { localStorage.setItem(KEYS, JSON.stringify({ ...myKeys(), [keyid]: key })); } catch {}
+}
+function button(label, cls, onclick) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  if (cls) b.className = cls;
+  b.onclick = onclick;
+  return b;
+}
+$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); accounts(); });
+async function accounts() {
+  try {
+    const { active, accounts, lyricsMs } = await api({ a: "spotify", k: "list" });
+    const mine = myKeys();
+    const box = $("accts");
+    box.replaceChildren();
+    for (const a of accounts) {
+      const key = mine[a.keyid], row = document.createElement("div"), on = a.id === active;
+      row.className = "acct";
+      const run = (k, msg) => async () => {
+        toast(msg);
+        try { await api({ a: "spotify", k, id: a.id, key }); } catch (e) { toast(why(e)); }
+        setTimeout(accounts, 4000);
+      };
+      if (key) {
+        row.append(button(on ? `▶  ${a.name}` : a.name, on ? "on" : "", on ? null : run("use", `Switching to ${a.name}…`)),
+                   button("✕", "x", () => confirm(`Remove ${a.name} from this TV?`) && run("forget", "Removing…")()));
+      } else {
+        const b = button(on ? `▶  ${a.name}` : `${a.name} · locked to their phone`, "locked", null);
+        b.disabled = true;
+        row.append(b);
+      }
+      box.append(row);
+    }
+    const btns = [button("+ Add account", "pill add", async () => {
+      toast("A code is on the TV: enter it at spotify.com/pair", 6000);
+      try { keepKey(await api({ a: "spotify", k: "add" })); } catch (e) { toast(why(e)); }
+      setTimeout(accounts, 20000);
+    })];
+    if (active) btns.push(button("Log out TV", "pill", async () => { await api({ a: "spotify", k: "logout" }).catch((e) => toast(why(e))); accounts(); }));
+    $("acctBtns").replaceChildren(...btns);
+    const fmt = (ms) => `${ms > 0 ? "+" : ""}${(ms / 1000).toFixed(2)}s`;
+    const nudge = (ms) => async () => { tick(); const r = await api({ a: "spotify", k: "sync", ms }); $("sync").querySelector("b").textContent = fmt(r.lyricsMs); };
+    $("sync").replaceChildren(button("◀ Earlier", "pill", nudge(-100)), Object.assign(document.createElement("b"), { textContent: fmt(lyricsMs) }),
+                              button("Later ▶", "pill", nudge(100)));
+  } catch (e) { $("accts").replaceChildren(Object.assign(document.createElement("p"), { className: "note", textContent: why(e) })); }
+}
+
+poll();
+</script>

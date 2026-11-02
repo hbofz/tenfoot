@@ -1,0 +1,16 @@
+[Unit]
+Description=Tenfoot AirPlay receiver (UxPlay)
+After=pipewire-pulse.service
+
+[Service]
+# Mirroring shows full screen on top of the kiosk and closes when the phone stops.
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=/usr/bin/stdbuf -oL -eL /usr/bin/uxplay -n "@NAME@" -nh -key %h/.config/uxplay/key.pem -v4l2 -vs waylandsink -as pulsesink -p -hls
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=default.target

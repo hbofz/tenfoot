@@ -1,0 +1,679 @@
+"""python3 -m unittest discover tests : the parts with no TV or browser to hand."""
+import json
+import os
+import tempfile
+import threading
+import time
+import unittest
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+
+import numpy as np
+import websocket
+from cryptography.fernet import Fernet
+
+from tenfoot import apps, cec, config, controls, cursor, kiosk, links, lyrics, server, sites, spotify, visualizer, watcher
+from tenfoot.apps import app_of, to_url
+
+JF = "http://192.168.1.20:8096"
+SEARCH = "https://www.google.com/search?q="
+SETTINGS = config.Settings(jellyfin_url=JF)
+APPS = apps.load_apps(SETTINGS)
+URLS = apps.app_urls(APPS)
+UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+
+
+class Config(unittest.TestCase):
+    def write(self, text):
+        d = tempfile.mkdtemp()
+        p = Path(d) / "config.toml"
+        p.write_text(text)
+        return p
+
+    def test_defaults_without_a_file(self):
+        s = config.load("/nonexistent/config.toml")
+        self.assertEqual((s.remote_mode, s.listen_host, s.screen), ("lan", "0.0.0.0", (1920, 1080)))
+
+    def test_render_tells_the_kiosk_the_mode(self):
+        from tenfoot.__main__ import render
+        run = Path(tempfile.mkdtemp())
+        with mock.patch.object(config, "RUN", run):
+            render(config.Settings(display_mode="1280x720@60"))
+        self.assertEqual((run / "display-mode").read_text(), "1280x720@60")
+        self.assertIn("window.APPS", (run / "config.js").read_text())
+
+    def test_values(self):
+        s = config.load(self.write('name = "Den"\nremote_mode = "tailscale"\nlatitude = 1.5\n'))
+        self.assertEqual((s.name, s.listen_host, s.latitude), ("Den", "127.0.0.1", 1.5))
+
+    def test_bad_values_stop_the_service(self):
+        for text in ('nmae = "typo"\n', 'remote_mode = "public"\n', 'remote_mode = "url"\n'):
+            with self.assertRaises(SystemExit):
+                config.load(self.write(text))
+
+
+class Apps(unittest.TestCase):
+    def test_list_follows_settings(self):
+        self.assertEqual(APPS[1]["id"], "jellyfin")
+        ids = {a["id"] for a in apps.load_apps(config.Settings(spotify=False))}
+        self.assertNotIn("spotify", ids)
+        self.assertNotIn("jellyfin", ids)
+
+    def test_pages_resolve_next_to_the_home_screen(self):
+        self.assertEqual(URLS["spotify"], (config.WEB_HOME / "spotify.html").as_uri())
+
+    def test_to_url(self):
+        self.assertEqual(to_url("youtube.com"), "https://youtube.com")
+        self.assertEqual(to_url("http://1.1.1.1/"), "http://1.1.1.1/")
+        self.assertEqual(to_url("HTTPS://x.y"), "HTTPS://x.y")
+        self.assertEqual(to_url("couch setup"), SEARCH + "couch%20setup")
+
+    def test_inside_the_house_is_a_search(self):
+        for inside in ("http://127.0.0.1:9222/json", "http://localhost:3678/status", "127.0.0.1:8765", "http://10.44.0.1/",
+                       "http://100.100.100.100/", "http://[::1]:8766/bands", "http://169.254.1.1/", "http://192.168.1.1/",
+                       "https://x.localhost/", "http://0.0.0.0:9222/"):
+            self.assertTrue(to_url(inside).startswith(SEARCH), inside)
+        self.assertEqual(to_url(JF + "/web/#/home", JF), JF + "/web/#/home")
+        self.assertTrue(to_url(JF + "/web/#/home").startswith(SEARCH))  # not configured: not allowed
+
+    def test_jellyfin_lookalikes_are_still_inside_the_house(self):
+        for trick in (JF + "@127.0.0.1:9222/json", "http://192.168.1.20:8097/", "https://192.168.1.20:8096/", "http://192.168.1.20:8096.nip.io/"):
+            self.assertNotEqual(to_url(trick, JF), trick, trick)
+        self.assertEqual(app_of(JF + "@127.0.0.1/", JF)[0], "web")
+
+    def test_other_schemes_are_a_search(self):
+        for bad in ("file:///etc/passwd", "chrome://settings", "javascript://%0aalert(1)", "data:text/html,<b>x</b>",
+                    "view-source:https://x.y", "devtools://devtools/x"):
+            self.assertTrue(to_url(bad).startswith(SEARCH), bad)
+
+    def test_youtube_links_open_in_the_tv_app(self):
+        tv = "https://www.youtube.com/tv#/watch?v=dQw4w9WgXcQ"
+        for link in ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "https://youtu.be/dQw4w9WgXcQ?si=abc", "youtu.be/dQw4w9WgXcQ",
+                     "https://m.youtube.com/watch?v=dQw4w9WgXcQ", "https://youtube.com/shorts/dQw4w9WgXcQ",
+                     "https://www.youtube.com/live/dQw4w9WgXcQ?feature=share"):
+            self.assertEqual(to_url(link), tv, link)
+        for other in ("https://www.youtube.com/", "https://www.youtube.com/@x", "https://www.youtube.com/watch?v=bad",
+                      "https://evil.example/watch?v=dQw4w9WgXcQ", "https://notyoutube.com/watch?v=dQw4w9WgXcQ"):
+            self.assertEqual(to_url(other), other, other)
+
+    def test_app_of(self):
+        self.assertEqual(app_of(apps.page_url("home.html")), ("home", None))
+        self.assertEqual(app_of(apps.page_url("sleep.html")), ("asleep", None))
+        self.assertEqual(app_of(URLS["spotify"]), ("spotify", None))
+        self.assertEqual(app_of("https://www.youtube.com/tv#/watch?v=x"), ("youtube", None))
+        self.assertEqual(app_of("https://www.youtube.com/watch?v=x"), ("web", "youtube.com"))
+        self.assertEqual(app_of(JF + "/web/", JF), ("jellyfin", None))
+        self.assertEqual(app_of("https://netflix.com/watch/81"), ("netflix", None))
+        self.assertEqual(app_of("https://auth.hbomax.com/login"), ("hbomax", None))
+        self.assertEqual(app_of("https://notnetflix.com/"), ("web", "notnetflix.com"))
+        for a in ("disney", "hbomax", "crunchyroll", "paramount", "shahid"):
+            self.assertEqual(app_of(URLS[a]), (a, None))
+
+
+class Sites(unittest.TestCase):
+    def test_identity(self):
+        self.assertEqual(sites.identity("https://www.youtube.com/tv#/browse", UA), (sites.TV_UA, {"userAgent": sites.TV_UA}))
+        self.assertEqual(sites.identity("https://www.netflix.com/", UA), (UA, {"userAgent": ""}))
+        ua, params = sites.identity("https://shahid.mbc.net/", UA)
+        self.assertIn("Windows NT 10.0", ua)
+        self.assertEqual(params["userAgentMetadata"]["platform"], "Windows")
+
+    def test_only_real_youtube_gets_the_tv_identity(self):
+        self.assertTrue(sites.wants_tv("https://youtube.com/tv"))
+        for u in ("https://www.youtube.com/watch?v=x", "https://open.spotify.com/", "https://evil.example/www.youtube.com/tv"):
+            self.assertFalse(sites.wants_tv(u), u)
+
+    def test_rules(self):
+        self.assertIs(sites.rules_for(URLS["shahid"]), sites.SHAHID_BLOCK)
+        self.assertEqual(sites.rules_for("https://play.hbomax.com/movie/x"), sites.SITE_BLOCK["hbomax.com"])
+        self.assertEqual(sites.rules_for(URLS["netflix"]), [])
+        self.assertEqual(sites.rules_for("about:blank"), [])
+
+    def test_watching(self):
+        for u in ("https://play.hbomax.com/video/watch/31ed7e52", "https://www.disneyplus.com/play/822d988b"):
+            self.assertTrue(sites.WATCHING.match(u), u)
+        for u in ("https://play.hbomax.com/show/x", "https://www.disneyplus.com/browse/x", "https://evil.example/https://play.hbomax.com/video/watch/x"):
+            self.assertFalse(sites.WATCHING.match(u), u)
+
+
+class Links(unittest.TestCase):
+    TOKEN = "s3cret-Tok_en"
+    PEOPLE = {"sam": "Sam-tok_123456789"}
+
+    def route(self, path, people=None):
+        return links.route(path, lambda t: links.who(t, self.TOKEN, self.PEOPLE if people is None else people))
+
+    def test_routes(self):
+        self.assertEqual(self.route("/s3cret-Tok_en/"), ("page", "house"))
+        self.assertEqual(self.route("/s3cret-Tok_en/api"), ("api", "house"))
+        self.assertEqual(self.route("/s3cret-Tok_en/ws"), ("ws", "house"))
+        self.assertEqual(self.route("/s3cret-Tok_en"), ("redirect", "house"))
+        self.assertEqual(self.route("/Sam-tok_123456789/api"), ("api", "sam"))
+
+    def test_wrong_paths_get_nothing(self):
+        for p in ("/", "/api", "/index.html", "/wrong/", "/wrong/api", "/s3cret-Tok_e/api", "/Sam-tok_12345678/api",
+                  "/s3cret-Tok_enX/api", "//s3cret-Tok_en/api", "/s3cret-Tok_en/etc/passwd", "/é/api", "/sw.js"):
+            self.assertIsNone(self.route(p)[0], p)
+
+    def test_guest_link_dies_with_the_house_secret(self):
+        g = links.guest_token(self.TOKEN)
+        self.assertGreaterEqual(len(g), 24)
+        self.assertEqual(links.who(g, self.TOKEN, {}), "guest")
+        self.assertIsNone(links.who(g, "other", {}))
+
+    def test_revoked_person(self):
+        self.assertIsNone(self.route("/Sam-tok_123456789/api", people={})[0])
+
+    def test_token_file_is_private_and_stable(self):
+        p = Path(tempfile.mkdtemp()) / "sub" / "token"
+        t = links.load_token(p)
+        self.assertGreaterEqual(len(t), 16)
+        self.assertEqual(links.load_token(p), t)
+        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+
+    def test_base_url(self):
+        self.assertEqual(links.base_url(config.Settings(remote_mode="url", remote_url="https://tv.example/")), "https://tv.example")
+        with mock.patch.object(links, "lan_ip", return_value="192.168.1.9"):
+            self.assertEqual(links.link_url(config.Settings(), "t"), "http://192.168.1.9:8765/t/")
+
+    def test_tailscale_with_no_name_yet_never_makes_a_hostless_link(self):
+        out = mock.Mock(stdout=json.dumps({"Self": {"DNSName": ""}}))
+        with mock.patch("subprocess.run", return_value=out), self.assertRaises(RuntimeError):
+            links.base_url(config.Settings(remote_mode="tailscale"))
+
+    def test_qr_file_is_private(self):
+        p = Path(tempfile.mkdtemp()) / "qr.svg"
+        links.write_qr(config.Settings(remote_mode="url", remote_url="https://tv.example"), self.TOKEN, p)
+        self.assertEqual(p.stat().st_mode & 0o777, 0o600)
+        self.assertIn(b"<svg", p.read_bytes())
+
+
+class FakeInput:
+    def __init__(self):
+        self.log = []
+
+    def press(self, k): self.log.append(("press", k))
+    def point(self, x, y): self.log.append(("point", round(x), round(y)))
+    def move(self, dx, dy): self.log.append(("move", dx, dy))
+    def click(self, b="left"): self.log.append(("click", b))
+    def scroll(self, n): self.log.append(("scroll", n))
+
+
+class FakeBrowser:
+    def __init__(self, url="https://www.google.com/"):
+        self.url, self.calls = url, []
+
+    def current_url(self): return self.url
+    def one_tab(self): self.calls.append("one_tab")
+    def navigate(self, url): self.calls.append(("navigate", url))
+    def call(self, method, params=None): self.calls.append((method, params))
+    def evaluate(self, js): return {"result": {"value": False}}
+
+
+def make_controls(browser=None, inp=None, **kw):
+    return controls.Controls(inp or FakeInput(), browser or FakeBrowser(), SETTINGS, APPS, **kw)
+
+
+class Commands(unittest.TestCase):
+    def test_keys(self):
+        c = make_controls()
+        c.handle({"a": "key", "k": "ok"})
+        self.assertEqual(c.inp.log, [("press", ["KEY_ENTER"])])
+        c.handle({"a": "key", "k": "backspace", "n": 3})
+        c.handle({"a": "key", "k": "backspace", "n": 999})
+        self.assertEqual(c.inp.log[1:], [("press", ["KEY_BACKSPACE"])] * 53)  # 3, then capped at 50
+
+    def test_refuses_anything_else(self):
+        c = make_controls()
+        for bad in ({"a": "key", "k": "KEY_POWER"}, {"a": "nope"}, {"a": "open", "url": " "}, {"a": "app", "k": "file:///etc/passwd"},
+                    {"a": "tv", "k": "selfdestruct"}, {"a": "tv", "k": "on"}, {"a": "spotify", "k": "list"}):
+            with self.assertRaises(ValueError, msg=bad):
+                c.handle(bad)
+
+    def test_back_depends_on_the_page(self):
+        c = make_controls(FakeBrowser("https://www.youtube.com/tv#/browse"))
+        c.handle({"a": "back"})
+        self.assertEqual(c.inp.log, [("press", ["KEY_ESC"])])
+        self.assertEqual(controls.back_keys("https://www.google.com/"), ["KEY_LEFTALT", "KEY_LEFT"])
+
+    def test_opening_leaves_one_tab(self):
+        c = make_controls()
+        c.handle({"a": "app", "k": "netflix"})
+        c.handle({"a": "home"})
+        self.assertEqual(c.browser.calls, ["one_tab", ("navigate", URLS["netflix"]), "one_tab", ("navigate", apps.page_url("home.html"))])
+
+    def test_phone_gets_names_and_colours_never_urls(self):
+        listed = make_controls().handle({"a": "apps"})
+        self.assertNotIn("url", listed[0])
+        self.assertEqual({a["id"] for a in listed if a["mouse"]}, {"web", "jellyfin"})
+
+    def test_state(self):
+        s = make_controls(FakeBrowser("https://www.netflix.com/browse")).handle({"a": "state"})
+        self.assertEqual(s, {"app": "netflix", "host": None, "power": None, "music": None})
+
+    def test_volume_level(self):
+        self.assertEqual(controls.volume_level("Volume: 0.45 [MUTED]\n"), (45, True))
+        self.assertEqual(controls.volume_level("Volume: 1.00\n"), (100, False))
+
+
+class Cursor(unittest.TestCase):
+    def setUp(self):
+        self.c = make_controls()
+        self.c.toast = lambda *a: None
+        self.c.cursor.toast = lambda *a: None
+        self.addCleanup(lambda: self.c.cursor.timer and self.c.cursor.timer.cancel())
+
+    def test_glide_speed(self):
+        self.assertEqual([cursor.glide_speed(t) for t in (0.1, 0.15, 3)], [0, 300, 2000])
+        self.assertAlmostEqual(cursor.glide_speed(0.4), 900)
+
+    def test_arrows_nudge_ok_clicks_back_puts_it_away(self):
+        c, log = self.c, self.c.inp.log
+        c.handle({"a": "cursor"})
+        c.handle({"a": "key", "k": "right"})
+        c.handle({"a": "key", "k": "ok"})
+        self.assertEqual(log, [("point", 960, 540), ("point", 980, 540), ("click", "left")])
+        c.handle({"a": "back"})
+        self.assertEqual(log[-1], ("point", 1919, 1079))
+        self.assertFalse(c.cursor.on)
+        c.handle({"a": "key", "k": "right"})
+        self.assertEqual(log[-1], ("press", ["KEY_RIGHT"]))  # off again: the arrows are keys
+
+    def test_held_arrow_glides_smoothly(self):
+        c = self.c.cursor
+        self.c.handle({"a": "cursor"})
+        c.glide("down", True)
+        time.sleep(0.5)
+        c.glide("down", False)
+        ys = [e[2] for e in self.c.inp.log[1:] if e[0] == "point"]
+        self.assertTrue(10 < len(ys) < 40 and ys[0] == 560 and 600 < ys[-1] < 1000 and ys == sorted(ys), ys)
+        time.sleep(0.1)
+        self.assertFalse(c.glider.is_alive())
+
+    def test_past_the_top_scrolls(self):
+        self.c.handle({"a": "cursor"})
+        self.c.cursor.y = 5
+        self.c.cursor.to(0, -20)
+        self.assertEqual(self.c.inp.log[-2:], [("scroll", 1), ("point", 960, 0)])
+
+    def test_enter_and_touchpad_get_through(self):
+        self.c.handle({"a": "cursor"})
+        self.c.handle({"a": "key", "k": "enter"})
+        self.assertEqual(self.c.inp.log[-1], ("press", ["KEY_ENTER"]))  # the phone's typing still works
+        self.c.handle({"a": "move", "dx": 1, "dy": 0})
+        self.assertFalse(self.c.cursor.on)
+        self.assertEqual(self.c.inp.log[-1], ("move", 1.0, 0.0))  # took over quietly, no trip to the corner
+
+
+class RemoteServer(unittest.TestCase):
+    TOKEN = "s3cret-Tok_en"
+
+    def setUp(self):
+        self.c = make_controls()
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), server.remote_handler(self.c, self.TOKEN))
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.srv.server_close)
+        self.addCleanup(self.srv.shutdown)
+        self.host = f"127.0.0.1:{self.srv.server_address[1]}"
+
+    def post(self, path, body):
+        req = urllib.request.Request(f"http://{self.host}{path}", data=body, method="POST")
+        return urllib.request.urlopen(req, timeout=5)
+
+    def test_page_works_on_plain_http(self):
+        """A page on a LAN address isn't a secure context: browsers hide these from it."""
+        page = (config.WEB_REMOTE / "index.html").read_text()
+        for api in ("crypto.subtle", "navigator.clipboard", "serviceWorker", "navigator.wakeLock"):
+            self.assertNotIn(api, page)
+
+    def test_page_headers_protect_the_link(self):
+        r = urllib.request.urlopen(f"http://{self.host}/{self.TOKEN}/", timeout=5)
+        self.assertEqual(r.headers["Referrer-Policy"], "no-referrer")
+        self.assertEqual(r.headers["Cache-Control"], "no-store")
+        self.assertIn("frame-ancestors", r.headers["Content-Security-Policy"])
+        self.assertIn(b"Tenfoot", r.read())
+
+    def test_redirect_adds_the_slash(self):
+        r = urllib.request.urlopen(f"http://{self.host}/{self.TOKEN}", timeout=5)
+        self.assertEqual(r.url, f"http://{self.host}/{self.TOKEN}/")
+
+    def test_wrong_token_404s_everywhere(self):
+        for req in (f"http://{self.host}/", f"http://{self.host}/wrong/", f"http://{self.host}/wrong/api"):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(e.exception.code, 404)
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self.post("/wrong/api", b'{"a":"home"}')
+        self.assertEqual(e.exception.code, 404)
+        self.assertEqual(self.c.browser.calls, [])
+
+    def test_api(self):
+        self.assertEqual(self.post(f"/{self.TOKEN}/api", b'{"a":"key","k":"ok"}').read(), b"ok")
+        self.assertEqual(self.c.inp.log, [("press", ["KEY_ENTER"])])
+        self.assertEqual(json.load(self.post(f"/{self.TOKEN}/api", b'{"a":"state"}'))["app"], "web")
+
+    def test_api_reports_bad_input_and_survives(self):
+        for body in (b"junk", b"[1]", b'{"a":"nope"}'):
+            with self.assertRaises(urllib.error.HTTPError) as e:
+                self.post(f"/{self.TOKEN}/api", body)
+            self.assertEqual(e.exception.code, 400, body)
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self.post(f"/{self.TOKEN}/api", b"x" * 10001)
+        self.assertEqual(e.exception.code, 400)
+
+    def test_pointer_stream_carries_only_pointer_commands(self):
+        ws = websocket.create_connection(f"ws://{self.host}/{self.TOKEN}/ws", timeout=5)
+        for m in ({"a": "move", "dx": 3, "dy": -2}, {}, {"a": "key", "k": "ok"}, {"a": "home"}, {"a": "scroll", "n": -1}, {"a": "click"}):
+            ws.send(json.dumps(m))
+        ws.send("x" * 300)  # not JSON: the stream ends, nothing else happens
+        time.sleep(0.4)
+        self.assertEqual(self.c.inp.log, [("move", 3.0, -2.0), ("scroll", -1), ("click", "left")])
+        self.assertEqual(self.c.browser.calls, [])
+
+    def test_pointer_stream_needs_a_token_and_an_upgrade(self):
+        with self.assertRaises(websocket.WebSocketBadStatusException):
+            websocket.create_connection(f"ws://{self.host}/wrong/ws", timeout=5)
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(f"http://{self.host}/{self.TOKEN}/ws", timeout=5)
+        self.assertEqual(e.exception.code, 404)
+
+
+class CEC(unittest.TestCase):
+    def feed(self, st, lines):
+        return [cec.route_event(st, l) for l in lines]
+
+    def test_parsers(self):
+        self.assertEqual(cec.phys_addr("\tPhysical Address           : 1.0.0.0\n"), "1.0.0.0")
+        self.assertIsNone(cec.phys_addr("\tPhysical Address           : f.f.f.f\n"))
+        self.assertIsNone(cec.phys_addr("nothing here"))
+        self.assertEqual(cec.parse_power("\tpwr-state: standby (0x01)\n"), "standby")
+        self.assertEqual(cec.parse_power("\tpwr-state: on (0x00)\n"), "on")
+        self.assertIsNone(cec.parse_power("Tx, Not Acknowledged"))
+
+    def test_remote_keys(self):
+        rc = cec.remote_command
+        self.assertEqual(rc("KEY_OK", 1), {"a": "key", "k": "ok"})
+        self.assertEqual(rc("KEY_EXIT", 1), {"a": "back"})
+        self.assertEqual(rc("KEY_ESC", 1), {"a": "back"})
+        self.assertEqual(rc("KEY_ROOT_MENU", 1), {"a": "home"})
+        self.assertEqual(rc("KEY_UP", 2), {"a": "key", "k": "up"})  # held arrow repeats
+        self.assertIsNone(rc("KEY_ROOT_MENU", 2))  # held Home does not
+        self.assertIsNone(rc("KEY_OK", 0))  # releases ignored
+        self.assertIsNone(rc("KEY_POWER", 1))  # the TV's own buttons ignored
+        self.assertEqual(rc("KEY_KPPLUS", 2), {"a": "tv", "k": "volup"})
+        self.assertEqual(rc("KEY_F8", 1), {"a": "cursor"})
+        self.assertIsNone(rc("KEY_F8", 2))
+        self.assertEqual(rc(("KEY_MIN_INTERESTING", "KEY_MUTE"), 1), {"a": "tv", "k": "mute"})  # evdev's real name for 113
+        self.assertEqual(rc(["KEY_X", "KEY_HOME"], 1), {"a": "home"})
+
+    def test_the_mute_key_as_evdev_really_names_it(self):
+        from evdev import ecodes
+        self.assertEqual(cec.remote_command(ecodes.KEY[ecodes.KEY_MUTE], 1), {"a": "tv", "k": "mute"})
+
+    def test_newest_repeats(self):
+        k = lambda code, value: type("Ev", (), {"code": code, "value": value})
+        held = [k(115, 1), k(115, 2), k(115, 2), k(103, 2), k(115, 2), k(115, 0)]
+        self.assertEqual([(e.code, e.value) for e in cec.newest_repeats(held)], [(115, 1), (103, 2), (115, 2), (115, 0)])
+
+    def test_replay_input_switch_while_reregistering(self):
+        """A real capture: switch to our input while we re-register."""
+        st = {"pa": "2.0.0.0", "claimed": True}
+        self.assertFalse(any(self.feed(st, ["Received from TV to all (0 to 15): ROUTING_CHANGE (0x80):", "\torig-phys-addr: 2.0.0.0",
+                                            "\tnew-phys-addr: 0.0.0.0", "Received from TV to all (0 to 15): ACTIVE_SOURCE (0x82):",
+                                            "\tphys-addr: 0.0.0.0"])))
+        self.assertIs(st["want"], False)
+        self.assertFalse(any(self.feed(st, ["Wed Sep 30 00:07:35.389800: Event: State Change: PA: f.f.f.f, LA mask: 0x0000",
+                                            "Received from TV to all (0 to 15): ROUTING_CHANGE (0x80):", "\torig-phys-addr: 0.0.0.0",
+                                            "\tnew-phys-addr: 2.0.0.0", "Received from TV to all (0 to 15): SET_STREAM_PATH (0x86):",
+                                            "\tphys-addr: 2.0.0.0", "Wed Sep 30 00:07:35.905072: Event: State Change: PA: 2.0.0.0, LA mask: 0x0000"])))
+        self.assertEqual(self.feed(st, ["Wed Sep 30 00:07:36.038735: Event: State Change: PA: 2.0.0.0, LA mask: 0x0100"]), [True])
+        # TV picks another input: no more announcing, even if we re-register.
+        self.feed(st, ["Received from TV to all (0 to 15): ACTIVE_SOURCE (0x82):", "\tphys-addr: 1.0.0.0"])
+        self.assertEqual(self.feed(st, ["Event: State Change: PA: 2.0.0.0, LA mask: 0x0100"]), [False])
+        self.assertFalse(cec.route_event(st, "Transmitted by Playback Device 2 to all (8 to 15): ACTIVE_SOURCE (0x82):"))
+
+    def test_replay_follower_format(self):
+        st = {"pa": "1.0.0.0", "claimed": True, "want": True}
+        self.feed(st, ["    TV to all (0 to 15): ROUTING_CHANGE (0x80):", "\torig-phys-addr: 1.0.0.0", "\tnew-phys-addr: 2.0.0.0",
+                       "    TV to all (0 to 15): SET_STREAM_PATH (0x86):", "\tphys-addr: 2.0.0.0"])
+        self.assertIs(st["want"], False)
+        self.assertEqual(self.feed(st, ["    TV to all (0 to 15): SET_STREAM_PATH (0x86):", "\tphys-addr: 1.0.0.0"]), [False, True])
+
+    def test_hotplug_blip_wants_but_doesnt_grab(self):
+        st = {"pa": "1.0.0.0", "claimed": True, "want": False}
+        self.assertFalse(any(self.feed(st, ["Event: State Change: PA: f.f.f.f, LA mask: 0x0000", "Event: State Change: PA: 1.0.0.0, LA mask: 0x0000",
+                                            "Event: State Change: PA: 1.0.0.0, LA mask: 0x0100"])))
+        self.assertIs(st["want"], True)
+
+    def test_long_unplug_comes_back_on_its_own_home(self):
+        st = {"pa": "1.0.0.0", "claimed": True, "want": False}
+        self.feed(st, ["Event: State Change: PA: f.f.f.f, LA mask: 0x0000"])
+        st["hpd"] -= 60
+        self.feed(st, ["Event: State Change: PA: 1.0.0.0, LA mask: 0x0000"])
+        self.assertIs(st["want"], False)
+
+
+class Kiosk(unittest.TestCase):
+    def test_mode_check(self):
+        self.assertTrue(kiosk.current_mode_ok("    1920x1080 px, 60.000000 Hz (preferred, current)\n", "1920x1080@60"))
+        self.assertTrue(kiosk.current_mode_ok("    1920x1080 px, 60.000000 Hz (current)\n", "1920x1080@60"))
+        self.assertFalse(kiosk.current_mode_ok("    3840x2160 px, 30.000000 Hz (current)\n    1920x1080 px, 60.000000 Hz\n", "1920x1080@60"))
+
+
+class FakePlayer(BaseHTTPRequestHandler):
+    """go-librespot: logged out, /status hangs while /auth/code holds a pair code; logged in, 204."""
+    paired = False
+
+    def do_GET(self):
+        if self.path == "/auth/code" and not FakePlayer.paired:
+            body = b'{"code":"ABC123"}'
+        elif self.path == "/status" and FakePlayer.paired:
+            body = b'{"username":"u","track":{"name":"x","artist_names":["a","b"],"position":1,"duration":2}}'
+        elif self.path == "/status":
+            return time.sleep(5)
+        else:
+            self.send_response(204)
+            return self.end_headers()
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+class SpotifyAccounts(unittest.TestCase):
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        self.s = spotify.Spotify(FakeBrowser(), config_dir=d / "cfg", run_dir=d / "run")
+        self.s.profiles_dir.mkdir(parents=True)
+
+    def test_sealed_accounts(self):
+        k1, k2 = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+        blob = spotify.seal(k1, {"username": "u", "data": "secret"})
+        self.assertNotIn("secret", blob)
+        self.assertEqual(spotify.unseal(k1, blob), {"username": "u", "data": "secret"})
+        with self.assertRaises(ValueError):
+            spotify.unseal(k2, blob)
+        self.assertNotEqual(spotify.keyid(k1), spotify.keyid(k2))
+        self.assertEqual(len(spotify.keyid(k1)), 16)
+
+    def test_valid_id(self):
+        self.assertTrue(spotify.valid_id("f5mi68yf7vorm4b23rsroc2r0"))
+        for bad in ("../state", "a/b", "", "x" * 65, None, 5):
+            self.assertFalse(spotify.valid_id(bad), bad)
+
+    def test_profile_name(self):
+        self.assertEqual(spotify.profile_name("<title>A &amp; B on Spotify</title>"), "A & B")
+        self.assertIsNone(spotify.profile_name("<title>Spotify</title>"))
+
+    def test_second_phone_cant_take_over_an_account_being_added(self):
+        self.s.pending.update(key="k", at=time.time(), by="sam")
+        with self.assertRaises(ValueError):
+            self.s.command({"k": "add", "by": "guest"})
+
+    def test_path_traversal(self):
+        with self.assertRaises(ValueError):
+            self.s.command({"k": "use", "id": "../../.ssh/id_rsa"})
+
+    def test_only_the_owners_phone_unlocks(self):
+        key = Fernet.generate_key().decode()
+        self.s.profile_path("u").write_text(json.dumps({"name": "U", "keyid": spotify.keyid(key), "blob": spotify.seal(key, {"username": "u"})}))
+        with self.assertRaises(ValueError):
+            self.s.command({"k": "use", "id": "u", "key": Fernet.generate_key().decode()})
+        self.assertEqual(self.s.saved_profiles(), [{"id": "u", "name": "U", "keyid": spotify.keyid(key)}])
+
+    def test_tv_page_gets_names_not_keys(self):
+        key = Fernet.generate_key().decode()
+        self.s.profile_path("u").write_text(json.dumps({"name": "U", "keyid": spotify.keyid(key), "blob": "BLOB"}))
+        self.s.publish_profiles()
+        text = (self.s.run_dir / "spotify-profiles.js").read_text()
+        self.assertIn('"name": "U"', text)
+        self.assertNotIn("BLOB", text)
+        self.assertNotIn("keyid", text)
+
+    def test_status_never_hangs_on_a_pair_code(self):
+        fake = ThreadingHTTPServer(("127.0.0.1", 0), FakePlayer)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        self.addCleanup(fake.server_close)
+        self.addCleanup(fake.shutdown)
+        self.s.player = f"http://127.0.0.1:{fake.server_port}"
+        FakePlayer.paired = False
+        t0 = time.time()
+        self.assertEqual(self.s.status(), {})
+        self.assertLess(time.time() - t0, 1)
+        FakePlayer.paired = True
+        self.assertEqual(self.s.music()["artist"], "a, b")
+
+    def test_pause_with_the_player_down_is_harmless(self):
+        self.s.player = "http://127.0.0.1:9"
+        self.s.pause()
+        self.assertIsNone(self.s.music())
+
+
+class Lyrics(unittest.TestCase):
+    def test_parse_lrc(self):
+        self.assertEqual(lyrics.parse_lrc("[00:12.50] Hello ♪\n[01:02.00]\nnot a line\n"),
+                         [{"t": 12.5, "text": "Hello"}, {"t": 62.0, "text": ""}])
+        self.assertEqual(lyrics.parse_lrc(None), [])
+
+    def test_lookup_404_is_no_lyrics(self):
+        lyrics.lookup.cache_clear()
+        err = urllib.error.HTTPError("u", 404, "no", {}, None)
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            self.assertEqual(lyrics.lookup("t", "a", "b", 1), [])
+
+
+class Visualizer(unittest.TestCase):
+    def test_bands(self):
+        e = visualizer.band_edges()
+        self.assertEqual(len(e), visualizer.BANDS + 1)
+        self.assertTrue(all(b > a for a, b in zip(e[:-1], e[1:])))
+        self.assertLessEqual(e[-1], visualizer.WINDOW // 2 + 1)
+        mag = np.random.rand(visualizer.WINDOW // 2 + 1)
+        self.assertTrue(np.allclose(visualizer.band_levels(mag, e), [mag[a:b].mean() for a, b in zip(e[:-1], e[1:])]))
+
+
+class Watcher(unittest.TestCase):
+    """The browser's events in, DevTools commands out, with no browser."""
+
+    def setUp(self):
+        self.sent, self.opened = [], []
+        self.w = watcher.Watcher(lambda m, p=None, s=None: self.sent.append((m, p, s)), UA, "SCRIPT", JF, lambda: self.opened.append(1))
+
+    def attach(self, sid, url, kind="page", waiting=True, opener=None, target=None):
+        info = {"type": kind, "url": url, "targetId": target or sid + "-t"}
+        if opener:
+            info["openerId"] = opener
+        self.w.handle({"method": "Target.attachedToTarget", "params": {"sessionId": sid, "targetInfo": info, "waitingForDebugger": waiting}})
+
+    def methods(self, sid=None):
+        return [m for m, _, s in self.sent if sid is None or s == sid]
+
+    def pause(self, sid, url, frame=None):
+        self.sent.clear()
+        self.w.handle({"method": "Fetch.requestPaused", "sessionId": sid, "params": {
+            "requestId": "r1", "frameId": frame or sid + "-t", "request": {"url": url, "headers": {"User-Agent": UA, "sec-ch-ua": "x", "Accept": "*"}}}})
+
+    def test_new_page_gets_the_layer_and_runs(self):
+        self.attach("p", "about:blank")
+        self.assertEqual(self.methods("p")[-1], "Runtime.runIfWaitingForDebugger")
+        self.assertIn(("Page.addScriptToEvaluateOnNewDocument", {"source": "SCRIPT"}, "p"), self.sent)
+        self.assertIn(("Network.setBypassServiceWorker", {"bypass": True}, "p"), self.sent)
+
+    def test_youtube_load_gets_the_tv_identity(self):
+        self.attach("p", "about:blank")
+        self.pause("p", "https://www.youtube.com/tv")
+        self.assertIn(("Emulation.setUserAgentOverride", {"userAgent": sites.TV_UA}, "p"), self.sent)
+        headers = next(p for m, p, _ in self.sent if m == "Fetch.continueRequest")["headers"]
+        self.assertIn({"name": "User-Agent", "value": sites.TV_UA}, headers)
+        self.assertFalse([h for h in headers if h["name"].lower().startswith("sec-ch-ua")])
+        self.assertIn({"name": "Accept", "value": "*"}, headers)
+        time.sleep(0.05)
+        self.assertEqual(self.opened, [1])  # Spotify paused
+
+    def test_ordinary_site_gets_stock_chrome_and_its_blocking(self):
+        self.attach("p", "about:blank")
+        self.pause("p", "https://www.disneyplus.com/")
+        self.assertIn(("Emulation.setUserAgentOverride", {"userAgent": ""}, "p"), self.sent)
+        self.assertIn(("Network.setBlockedURLs", {"urlPatterns": sites.SITE_BLOCK["disneyplus.com"]}, "p"), self.sent)
+
+    def test_frames_pass_untouched(self):
+        self.attach("p", "about:blank")
+        self.pause("p", "https://ads.example/", frame="some-iframe")
+        self.assertEqual(self.sent, [("Fetch.continueRequest", {"requestId": "r1"}, "p")])
+
+    def test_ad_popup_closed_after_it_runs(self):
+        self.attach("p", "https://site.example/")
+        self.sent.clear()
+        self.attach("ad", "https://ad.example/", opener="p-t", target="ad-t")
+        self.assertEqual(self.sent, [("Runtime.runIfWaitingForDebugger", None, "ad"), ("Target.closeTarget", {"targetId": "ad-t"}, None)])
+
+    def test_apps_keep_their_popups(self):
+        self.attach("p", "https://www.netflix.com/browse")
+        self.sent.clear()
+        self.attach("win", "https://accounts.google.com/", opener="p-t")
+        self.assertNotIn("Target.closeTarget", self.methods())
+
+    def test_network_quiet_during_a_show(self):
+        url = "https://play.hbomax.com/video/watch/x"
+        self.attach("p", "about:blank")
+        self.w.handle({"method": "Page.navigatedWithinDocument", "sessionId": "p", "params": {"frameId": "p-t", "url": url}})
+        self.assertIn(("Network.disable", None, "p"), self.sent)
+        self.assertEqual(self.w.urls["p"], url)
+        self.sent.clear()
+        self.w.handle({"method": "Page.navigatedWithinDocument", "sessionId": "p", "params": {"frameId": "p-t", "url": "https://play.hbomax.com/show/x"}})
+        self.assertEqual(self.methods("p")[0], "Network.enable")
+
+    def test_network_on_before_navigating_away(self):
+        self.attach("p", "https://play.hbomax.com/video/watch/x", waiting=False)
+        self.assertIn("p", self.w.quiet)
+        self.assertTrue(self.w.network_on())
+        self.assertFalse(self.w.quiet)
+        self.assertFalse(self.w.network_on())
+
+    def test_reconnecting_reapplies_an_open_pages_identity(self):
+        self.attach("p", "https://shahid.mbc.net/ar/", waiting=False)
+        self.assertIn("Emulation.setUserAgentOverride", self.methods("p"))
+        self.assertIn(("Network.setBlockedURLs", {"urlPatterns": sites.SHAHID_BLOCK}, "p"), self.sent)
+
+    def test_detach_forgets(self):
+        self.attach("p", "https://x.example/")
+        self.w.handle({"method": "Target.detachedFromTarget", "params": {"sessionId": "p"}})
+        self.assertFalse(self.w.pages or self.w.urls)
+
+    def test_injected_script(self):
+        js = watcher.injected_script(JF)
+        self.assertLess(js.index('"tvKeyboard"'), js.index('"tvHighlight"'))  # the keyboard gets keys first
+        self.assertIn('"192.168.1.20": {', js)
+        self.assertNotIn("__JELLYFIN_HOST__", js)
+        for domain in apps.SITE_APPS:
+            if domain != "shahid.mbc.net":
+                self.assertIn(f'"{domain}": {{', js)
+
+
+if __name__ == "__main__":
+    unittest.main()

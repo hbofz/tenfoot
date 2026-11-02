@@ -1,0 +1,57 @@
+Wayland: let hardware-decoded NV12 video become an overlay. GBM (Mesa) can't allocate NV12
+but imports it; Chromium only ever asked the allocation question, so video frames never got a
+GbmPixmapWayland and could never be scheduled on their own Wayland surface.
+
+--- a/ui/gfx/linux/gbm_wrapper.cc	2026-10-21 11:34:26.276147793 -0500
++++ b/ui/gfx/linux/gbm_wrapper.cc	2026-10-21 11:34:26.292147719 -0500
+@@ -431,11 +431,11 @@
+       return nullptr;
+     }
+ 
+-    int gbm_flags = 0;
+-    if ((gbm_flags = GetSupportedGbmFlags(format)) == 0) {
+-      LOG(ERROR) << "gbm format not supported: " << DrmFormatToString(format);
+-      return nullptr;
+-    }
++    // GetSupportedGbmFlags() asks whether GBM can *allocate* the format with
++    // those flags. Mesa's GBM says no for NV12 (no YUV in its allocation
++    // table) but imports a decoder's NV12 dmabuf fine, so import anyway: if
++    // GBM really can't use the format, gbm_bo_import() fails below.
++    int gbm_flags = GetSupportedGbmFlags(format);
+ 
+     struct gbm_import_fd_modifier_data fd_data;
+     fd_data.width = size.width();
+--- a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc	2026-10-21 11:33:56.116287377 -0500
++++ b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc	2026-10-21 11:33:56.136287284 -0500
+@@ -290,8 +290,9 @@
+     gfx::NativePixmapHandle handle) {
+ #if defined(WAYLAND_GBM)
+   auto* gbm_device = buffer_manager_->GetGbmDevice();
+-  if (gbm_device && gbm_device->CanCreateBufferForFormat(
+-                        GetFourCCFormatFromSharedImageFormat(format))) {
++  const bool gbm_can_create = gbm_device && gbm_device->CanCreateBufferForFormat(
++                                               GetFourCCFormatFromSharedImageFormat(format));
++  if (gbm_can_create) {
+     scoped_refptr<GbmPixmapWayland> pixmap =
+         base::MakeRefCounted<GbmPixmapWayland>(buffer_manager_);
+     if (pixmap->InitializeBufferFromHandle(widget, size, format,
+@@ -299,6 +300,19 @@
+       return pixmap;
+     }
+   } else {
++    // GBM may not *allocate* a format and still import it: Mesa's GBM answers
++    // "unsupported" for NV12 (its allocation table has no YUV), yet importing
++    // a decoder's NV12 dmabuf works. Only a GbmPixmapWayland can be scheduled
++    // as an overlay plane, so try the import before the plain dmabuf pixmap,
++    // which keeps every hardware-decoded video composited on the GPU.
++    if (gbm_device) {
++      scoped_refptr<GbmPixmapWayland> pixmap =
++          base::MakeRefCounted<GbmPixmapWayland>(buffer_manager_);
++      if (pixmap->InitializeBufferFromHandle(widget, size, format,
++                                             gfx::CloneHandleForIPC(handle))) {
++        return pixmap;
++      }
++    }
+     scoped_refptr<gfx::NativePixmapDmaBuf> pixmap =
+         base::MakeRefCounted<gfx::NativePixmapDmaBuf>(size, format,
+                                                       std::move(handle));

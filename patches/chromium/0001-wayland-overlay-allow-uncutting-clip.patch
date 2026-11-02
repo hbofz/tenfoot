@@ -1,0 +1,23 @@
+--- a/ui/ozone/platform/wayland/gpu/wayland_overlay_manager.cc	2026-10-21 11:05:51.076187805 -0500
++++ b/ui/ozone/platform/wayland/gpu/wayland_overlay_manager.cc	2026-10-21 11:05:51.092187731 -0500
+@@ -84,8 +84,18 @@
+     return false;
+   }
+ 
+-  // Wayland doesn't support clip_rect, background_color.
+-  if (candidate.clip_rect || candidate.background_color.has_value()) {
++  // Wayland can't clip a surface, so reject a clip_rect that cuts into the
++  // quad (as DrmOverlayManager does). Web content always carries one (from its
++  // embedding render pass), and for a video it normally covers the whole quad:
++  // rejecting every clip_rect kept all page video off overlays.
++  if (candidate.plane_z_order >= 0 && candidate.clip_rect &&
++      !candidate.clip_rect->Contains(
++          gfx::ToNearestRect(candidate.display_rect))) {
++    return false;
++  }
++
++  // Wayland doesn't support background_color.
++  if (candidate.background_color.has_value()) {
+     return false;
+   }
+ 

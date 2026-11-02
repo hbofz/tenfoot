@@ -1,0 +1,81 @@
+scene: frame callbacks for single-pixel buffers covered by their own window
+
+Chromium (Wayland overlay delegation) asks for frame callbacks on the root of its surface tree, a
+transparent single-pixel background. Once its video is promoted to an opaque subsurface covering
+the window, that root has no visible region, gets no output and no frame done, and Chromium waits
+for ever: the picture freezes on the first video frame. Give such buffers their outputs and frame
+callbacks; rendering still uses the real visible region, so nothing extra is drawn.
+
+--- a/types/scene/wlr_scene.c	2026-10-21 17:02:45.465820203 -0500
++++ b/types/scene/wlr_scene.c	2026-10-21 17:27:07.483752087 -0500
+@@ -425,6 +425,23 @@
+ 
+ 	struct wlr_scene_buffer *scene_buffer = wlr_scene_buffer_from_node(node);
+ 
++	// A single-pixel buffer covered by the rest of its window still belongs on
++	// the outputs it lies on, so it gets frame callbacks and presentation
++	// feedback: Chromium (overlay delegation) asks for those on the root of its
++	// surface tree, a single-pixel background its opaque video covers, and would
++	// wait for ever. It still isn't rendered: that uses the real visible region.
++	pixman_region32_t covered;
++	pixman_region32_init(&covered);
++	pixman_region32_t *visible_region = &node->visible;
++	int node_x, node_y;
++	if (scene_buffer->is_single_pixel_buffer && pixman_region32_empty(&node->visible) &&
++			wlr_scene_node_coords(node, &node_x, &node_y)) {
++		int node_width, node_height;
++		scene_node_get_size(node, &node_width, &node_height);
++		pixman_region32_union_rect(&covered, &covered, node_x, node_y, node_width, node_height);
++		visible_region = &covered;
++	}
++
+ 	uint32_t largest_overlap = 0;
+ 	struct wlr_scene_output *old_primary_output = scene_buffer->primary_output;
+ 	scene_buffer->primary_output = NULL;
+@@ -432,7 +449,7 @@
+ 	size_t count = 0;
+ 	uint64_t active_outputs = 0;
+ 
+-	if (!pixman_region32_empty(&node->visible)) {
++	if (!pixman_region32_empty(visible_region)) {
+ 		struct wlr_scene_output *scene_output;
+ 
+ 		// Compute the region covered by all outputs, then intersect with the
+@@ -445,7 +462,7 @@
+ 			pixman_region32_union_rect(&visible, &visible,
+ 				scene_output->x, scene_output->y, width, height);
+ 		}
+-		pixman_region32_intersect(&visible, &visible, &node->visible);
++		pixman_region32_intersect(&visible, &visible, visible_region);
+ 		uint32_t visible_area = region_area(&visible);
+ 		pixman_region32_fini(&visible);
+ 
+@@ -473,7 +490,7 @@
+ 
+ 			pixman_region32_t intersection;
+ 			pixman_region32_init(&intersection);
+-			pixman_region32_intersect_rect(&intersection, &node->visible,
++			pixman_region32_intersect_rect(&intersection, visible_region,
+ 				output_box.x, output_box.y, output_box.width, output_box.height);
+ 			uint32_t overlap = region_area(&intersection);
+ 			pixman_region32_fini(&intersection);
+@@ -492,6 +509,8 @@
+ 		}
+ 	}
+ 
++	pixman_region32_fini(&covered);
++
+ 	uint64_t old_active = scene_buffer->active_outputs;
+ 	scene_buffer->active_outputs = active_outputs;
+ 
+@@ -1122,7 +1141,9 @@
+ 
+ void wlr_scene_buffer_send_frame_done(struct wlr_scene_buffer *scene_buffer,
+ 		struct wlr_scene_frame_done_event *event) {
+-	if (!pixman_region32_empty(&scene_buffer->node.visible)) {
++	// Covered single-pixel buffers too: see update_node_update_outputs().
++	if (!pixman_region32_empty(&scene_buffer->node.visible) ||
++			(scene_buffer->is_single_pixel_buffer && scene_buffer->primary_output != NULL)) {
+ 		wl_signal_emit_mutable(&scene_buffer->events.frame_done, event);
+ 	}
+ }

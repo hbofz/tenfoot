@@ -1,0 +1,15 @@
+[Unit]
+Description=Tenfoot: the phone remote and the kiosk's helper
+
+[Service]
+WorkingDirectory=@ROOT@
+ExecStart=/usr/bin/python3 -m tenfoot serve
+Restart=always
+RestartSec=3
+# This service can never gain privileges, whatever happens to it.
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=default.target

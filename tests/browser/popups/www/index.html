@@ -1,0 +1,8 @@
+<!doctype html><title>page</title>
+<script>window.clicks = 0; addEventListener("mouseup", () => clicks++, true);</script>
+<style>body{margin:0}div{position:absolute;width:200px;height:200px}</style>
+<!-- what an ad-heavy page does on the first click -->
+<div style="left:0;top:0;background:red" onclick="window.open('http://localhost:8799/ad.html')"></div>
+<a style="position:absolute;left:300px;top:0;width:200px;height:200px;background:blue;display:block" href="http://localhost:8799/ad.html" target="_blank" rel="noopener">x</a>
+<iframe style="position:absolute;left:600px;top:0;width:200px;height:200px;border:0" src="http://localhost:8799/frame.html"></iframe>
+<div style="left:900px;top:0;background:gray"></div>

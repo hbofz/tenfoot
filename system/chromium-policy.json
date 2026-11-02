@@ -1,0 +1,35 @@
+{
+  "DnsOverHttpsMode": "secure",
+  "DnsOverHttpsTemplates": "https://dns.adguard-dns.com/dns-query",
+  "DownloadRestrictions": 3,
+  "URLBlocklist": [
+    "file://*",
+    "chrome://*",
+    "view-source:*",
+    "javascript://*"
+  ],
+  "URLAllowlist": [
+    "file://@ROOT@/web/home/",
+    "chrome://newtab",
+    "chrome://new-tab-page"
+  ],
+  "PromptForDownloadLocation": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "TranslateEnabled": false,
+  "MetricsReportingEnabled": false,
+  "SearchSuggestEnabled": true,
+  "SafeBrowsingProtectionLevel": 1,
+  "BackgroundModeEnabled": false,
+  "QuicAllowed": false,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "AudioCaptureAllowed": false,
+  "VideoCaptureAllowed": false,
+  "LocalNetworkAccessBlockedForUrls": [
+    "*"
+  ],
+  "ExtensionInstallBlocklist": [
+    "*"
+  ]
+}

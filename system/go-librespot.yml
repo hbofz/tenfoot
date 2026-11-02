@@ -1,0 +1,14 @@
+# go-librespot: this box as a Spotify Connect speaker. Log in with a code at spotify.com/pair.
+device_name: "@NAME@"
+device_type: tv
+audio_backend: pulseaudio   # PipeWire's PulseAudio socket -> TV over HDMI
+bitrate: 320
+zeroconf_enabled: false
+credentials:
+  type: device_auth
+server:
+  enabled: true
+  address: localhost        # only this box (home screen + service) can reach it
+  port: 3678
+  allow_origin: '*'         # the Now Playing page is a file:// page
+  image_size: xlarge

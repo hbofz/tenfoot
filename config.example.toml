@@ -1,0 +1,22 @@
+# Copy to ~/.config/tenfoot/config.toml. Every setting is optional.
+name = "Tenfoot"                 # what the TV, Spotify and AirPlay call this box (run install.sh again after changing it)
+
+# Weather on the home screen (Open-Meteo, no account). Leave out for no weather.
+# latitude = 51.5
+# longitude = -0.12
+# temperature_unit = "celsius"   # or "fahrenheit"
+
+# How phones reach the remote:
+#   "lan"        same network, plain HTTP: anyone on the network could read links and Spotify account keys in transit
+#   "tailscale"  localhost only; publish with `sudo tailscale serve --bg 8765`
+#   "url"        localhost only, behind your own proxy; set remote_url too
+remote_mode = "lan"
+# remote_url = "https://tv.example.com"
+
+display_mode = "1920x1080@60"
+spotify = true
+# jellyfin_url = "http://192.168.1.20:8096"   # adds a Jellyfin tile
+
+# Input devices to use as TV remotes, as full-match patterns on the device's name.
+# HDMI-CEC remotes show up as vc4-hdmi-N. Add a Bluetooth or USB remote by name:
+# remote_devices = ["vc4-hdmi-\\d+", "My Remote"]
