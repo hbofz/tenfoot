@@ -1,7 +1,9 @@
 """Run on an installed box: python3 tests/box_check.py   Checks the running service, browser and input for real,
 through the same API the phone uses. Opens sites but plays nothing and signs in to nothing. Prints no secrets."""
+import grp
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -57,6 +59,8 @@ def status(url, method="GET"):
         return e.code
 
 
+check("the TV's user has no sudo", subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode != 0
+      and not {"sudo", "adm"} & {grp.getgrgid(g).gr_name for g in os.getgroups()})
 check("browser answers", wait(cdp.current_url, 60))
 check("wrong token gets 404", status(f"http://127.0.0.1:{settings.remote_port}/wrong/") == 404)
 check("phone page loads", b"Tenfoot" in urllib.request.urlopen(base + "/", timeout=5).read())

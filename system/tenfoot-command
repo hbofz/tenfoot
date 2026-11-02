@@ -1,0 +1,9 @@
+#!/bin/sh
+# For your admin user: runs Tenfoot's commands as the TV's own user.
+#   tenfoot links | link NAME | revoke NAME | render | restart
+T=tenfoot
+RUN=/run/user/$(id -u $T)
+if [ "${1:-}" = restart ]; then
+  exec sudo -u $T -H env XDG_RUNTIME_DIR="$RUN" systemctl --user restart tenfoot
+fi
+exec sudo -u $T -H env XDG_RUNTIME_DIR="$RUN" sh -c 'cd "$HOME/tenfoot" && exec python3 -m tenfoot "$@"' tenfoot "$@"

@@ -1,9 +1,11 @@
 #!/bin/sh
-# Installs Tenfoot on Raspberry Pi OS (Trixie or later, 64-bit, Pi 4) for the user running it, from
-# a clone of this repo. Safe to re-run. Options: --airplay  also install the AirPlay receiver
-#                                                --no-wallpapers  skip the photo download
+# Installs Tenfoot on Raspberry Pi OS (Trixie or later, 64-bit, Pi 4) from a clone of this repo. Run it as your
+# normal admin user. The TV itself runs as its own "tenfoot" user with no sudo, so a hacked browser can't take
+# over the box. Safe to re-run; re-run it to update. Options: --airplay  also install the AirPlay receiver
+#                                                             --no-wallpapers  skip the photo download
 set -eu
-ROOT=$(cd "$(dirname "$0")" && pwd)
+SRC=$(cd "$(dirname "$0")" && pwd)
+TV=tenfoot
 AIRPLAY=0 WALLPAPERS=1
 for a in "$@"; do
   case "$a" in
@@ -13,35 +15,32 @@ for a in "$@"; do
   esac
 done
 [ "$(dpkg --print-architecture)" = arm64 ] || { echo "Tenfoot needs a 64-bit Raspberry Pi OS" >&2; exit 1; }
-CONF=$HOME/.config/tenfoot
-UNITS=$HOME/.config/systemd/user
-mkdir -p "$CONF" "$UNITS"
-chmod 700 "$CONF"
-[ -e "$CONF/config.toml" ] || cp "$ROOT/config.example.toml" "$CONF/config.toml"
-NAME=$(cd "$ROOT" && python3 -c 'from tenfoot import config; print(config.load().name)' 2>/dev/null || echo Tenfoot)
-fill() { sed -e "s|@ROOT@|$ROOT|g" -e "s|@NAME@|$NAME|g" "$1"; }
+[ "$(id -un)" != "$TV" ] || { echo "Run this as your admin user, not $TV" >&2; exit 1; }
 
 # Chromium and the kiosk's compositor, Widevine from Raspberry Pi's own repo (never bundled), sound, CEC, input.
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade curl chromium cage wlr-randr libwidevinecdm0 \
   pipewire-pulse wireplumber pulseaudio-utils v4l-utils coreutils procps \
   python3-evdev python3-websocket python3-qrcode python3-cryptography python3-numpy python3-pil >/dev/null
+[ "$AIRPLAY" = 0 ] || {
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade --no-install-recommends uxplay gstreamer1.0-plugins-bad avahi-daemon >/dev/null
+  sudo systemctl enable --now avahi-daemon
+}
 
-# Widevine: the Pi package ships it in Firefox's layout; give Chromium the Chrome layout plus the
-# hint file its component loader reads.
-W=$CONF/chromium/WidevineCdm
-mkdir -p "$W/pi/_platform_specific/linux_arm64"
-ln -sf /opt/WidevineCdm/manifest.json "$W/pi/manifest.json"
-ln -sf /opt/WidevineCdm/gmp-widevinecdm/latest/libwidevinecdm.so "$W/pi/_platform_specific/linux_arm64/"
-echo "{\"Path\":\"$W/pi\"}" > "$W/latest-component-updated-widevine-cdm"
+# The TV's user: no sudo and no password, only what it needs for sound, the GPU, CEC and the virtual remote.
+id "$TV" >/dev/null 2>&1 || sudo useradd --create-home --shell /bin/bash "$TV"
+sudo usermod -aG input,video,render,audio "$TV"
+sudo passwd -l "$TV" >/dev/null
+sudo chmod 750 "/home/$TV"
+APP=/home/$TV/tenfoot
+sudo -u "$TV" mkdir -p "$APP"
+tar -C "$SRC" --exclude=.git --exclude=__pycache__ -cf - . | sudo -u "$TV" tar -xf - -C "$APP"
+fill() { sed -e "s|@ROOT@|$APP|g" "$1"; }
 
 # Browser policy: ad-blocking DNS, and sites can't reach this box's own services or other files.
-fill "$ROOT/system/chromium-policy.json" > "$CONF/policy.json"
-sudo install -D -m 644 "$CONF/policy.json" /etc/chromium/policies/managed/tenfoot.json
-rm "$CONF/policy.json"
+fill "$SRC/system/chromium-policy.json" | sudo install -D -m 644 /dev/stdin /etc/chromium/policies/managed/tenfoot.json
 
 # The virtual keyboard and mouse the remote drives.
-sudo usermod -aG input,video,render "$(id -un)"  # uinput; CEC and the GPU
 echo uinput | sudo tee /etc/modules-load.d/tenfoot.conf >/dev/null
 echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d/60-tenfoot-uinput.rules >/dev/null
 sudo modprobe uinput
@@ -53,68 +52,20 @@ sudo mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n' | sudo tee /etc/systemd/journald.conf.d/tenfoot.conf >/dev/null
 sudo systemctl restart systemd-journald
 
-# Log in on tty1 at boot; the block in ~/.profile then starts the kiosk, only on that console.
-# cage runs without -s, so a keyboard can't switch to another console; the optional zero-copy
-# compositor (patches/wlroots) is used once it's built.
-sudo raspi-config nonint do_boot_behaviour B2
-touch "$HOME/.profile"
-sed -i '/^# tenfoot kiosk/,/^fi$/d' "$HOME/.profile"
-cat >> "$HOME/.profile" <<PROFILE
-# tenfoot kiosk: only on the physical console, never over SSH. Ctrl+C can't break the loop.
-if [ "\$(tty)" = /dev/tty1 ] && [ -z "\${WAYLAND_DISPLAY:-}" ]; then
-  trap '' INT QUIT TSTP
-  while :; do WLR_DRM_FORCE_LIBLIFTOFF=1 LD_LIBRARY_PATH="$ROOT/wlroots-build" cage -- "$ROOT/system/kiosk.sh"; sleep 3; done
-fi
-PROFILE
+# Boot to a console logged in as the TV's user on tty1; its ~/.profile starts the kiosk.
+sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$TV" | sudo tee /etc/systemd/system/getty@tty1.service.d/autologin.conf >/dev/null
+sudo systemctl set-default multi-user.target >/dev/null
+sudo systemctl daemon-reload
 
-# Services.
-fill "$ROOT/system/tenfoot.service" > "$UNITS/tenfoot.service"
-SPOTIFY=$(cd "$ROOT" && python3 -c 'from tenfoot import config; print(int(config.load().spotify))' 2>/dev/null || echo 1)
-if [ "$SPOTIFY" = 1 ]; then
-  # Spotify Connect (go-librespot, pinned release, checksum-verified).
-  GLR=v0.10.2 GLR_SHA=800b174f066624edf37caec8266fd08e914e6fd837b2c92a4042aa21c0bafa4d
-  mkdir -p "$ROOT/spotify"
-  if [ "$(cat "$ROOT/spotify/.sha" 2>/dev/null)" != "$GLR_SHA" ]; then
-    T=$(mktemp)
-    curl -fsSL -o "$T" "https://github.com/devgianlu/go-librespot/releases/download/$GLR/go-librespot_linux_arm64.tar.gz"
-    echo "$GLR_SHA  $T" | sha256sum -c --quiet
-    tar -xzf "$T" -C "$ROOT/spotify" go-librespot
-    rm "$T"
-    echo "$GLR_SHA" > "$ROOT/spotify/.sha"
-  fi
-  mkdir -p "$HOME/.config/go-librespot"
-  chmod 700 "$HOME/.config/go-librespot"
-  fill "$ROOT/system/go-librespot.yml" > "$HOME/.config/go-librespot/config.yml"
-  fill "$ROOT/system/tenfoot-spotify.service" > "$UNITS/tenfoot-spotify.service"
-fi
-if [ "$AIRPLAY" = 1 ]; then
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade --no-install-recommends uxplay gstreamer1.0-plugins-bad avahi-daemon >/dev/null
-  sudo systemctl enable --now avahi-daemon
-  install -d -m 700 "$HOME/.config/uxplay"
-  fill "$ROOT/system/tenfoot-airplay.service" > "$UNITS/tenfoot-airplay.service"
-fi
+# Keep its services running with nobody logged in, and wait for its service manager to be up.
+sudo loginctl enable-linger "$TV"
+RUN=/run/user/$(id -u "$TV")
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$RUN/bus" ] && break; sleep 1; done
 
-# Sound: default output = the TV over HDMI, full volume, so the remote's volume is what you hear.
-XDG_RUNTIME_DIR="/run/user/$(id -u)"
-export XDG_RUNTIME_DIR
-loginctl enable-linger "$(id -un)" 2>/dev/null || true
-systemctl --user daemon-reload
-systemctl --user start pipewire.socket pipewire-pulse.socket pipewire wireplumber pipewire-pulse
-sleep 2
-HDMI=$(wpctl status | sed -n "/Sinks:/,/Sources:/p" | grep HDMI | grep -o "[0-9]\+\." | head -1 | tr -d .)
-if [ -n "$HDMI" ]; then wpctl set-default "$HDMI"; wpctl set-volume "$HDMI" 1.0; wpctl set-mute "$HDMI" 0; fi
+# Everything else runs as that user.
+sudo -u "$TV" -H env XDG_RUNTIME_DIR="$RUN" AIRPLAY="$AIRPLAY" WALLPAPERS="$WALLPAPERS" sh "$APP/system/setup-user.sh"
 
-(cd "$ROOT" && python3 -m tenfoot render)
-for s in tenfoot tenfoot-spotify tenfoot-airplay; do
-  [ -e "$UNITS/$s.service" ] && { systemctl --user enable "$s" 2>/dev/null; systemctl --user restart "$s"; }
-done
-if [ "$WALLPAPERS" = 1 ]; then
-  # One now, so the first boot has a picture (a rate-limited download mustn't hold up the install). The rest in
-  # the background, resuming after a reboot until it has them all; the home screen uses what's there so far.
-  timeout 180 python3 "$ROOT/tools/wallpapers.py" 1 >/dev/null 2>&1 || echo "No wallpaper yet; they'll keep downloading in the background."
-  fill "$ROOT/system/tenfoot-wallpapers.service" > "$UNITS/tenfoot-wallpapers.service"
-  systemctl --user daemon-reload
-  systemctl --user enable tenfoot-wallpapers 2>/dev/null
-  systemctl --user start --no-block tenfoot-wallpapers
-fi
+# `tenfoot` for your admin user: links, restart.
+fill "$SRC/system/tenfoot-command" | sudo install -m 755 /dev/stdin /usr/local/bin/tenfoot
 echo "Installed. Reboot to start the kiosk: sudo reboot"

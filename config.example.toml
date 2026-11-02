@@ -1,4 +1,4 @@
-# Copy to ~/.config/tenfoot/config.toml. Every setting is optional.
+# Lives at /home/tenfoot/.config/tenfoot/config.toml. Every setting is optional.
 name = "Tenfoot"                 # what the TV, Spotify and AirPlay call this box (run install.sh again after changing it)
 
 # Weather on the home screen (Open-Meteo, no account). Leave out for no weather.

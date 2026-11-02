@@ -25,20 +25,20 @@ You need your own subscriptions: Tenfoot plays what your accounts already can, t
 
 It boots into the home screen. One wallpaper comes with the install; the rest download in the background and can take hours, and the home screen uses what it has so far.
 
-Undo it with `~/tenfoot/uninstall.sh`.
+To update, `git pull` in your clone and run `install.sh` again. Undo it with `uninstall.sh`; add `--purge` to delete the TV's user, its logins and settings too.
 
 ## Settings
 
-Edit `~/.config/tenfoot/config.toml`, then `systemctl --user restart tenfoot` (after changing `name` or `spotify`, run `install.sh` again). Every setting is explained in [config.example.toml](config.example.toml). To change the apps, copy `apps.json` to `~/.config/tenfoot/apps.json` and edit it.
+The TV runs as its own `tenfoot` user, which has no sudo. Edit its settings with `sudo -u tenfoot nano /home/tenfoot/.config/tenfoot/config.toml`, then run `tenfoot restart` (after changing `name` or `spotify`, run `install.sh` again). Every setting is explained in [config.example.toml](config.example.toml). To change the apps, put your own copy of `apps.json` in that same folder.
 
 ## The phone remote
 
 By default phones connect over your home network, using a secret link. The link, and the key that unlocks a saved Spotify account, travel as plain HTTP, so anyone already on your network could read them. On a network you don't trust, use `remote_mode = "tailscale"`.
 
-    python3 -m tenfoot links          # list links (run from ~/tenfoot)
-    python3 -m tenfoot link sam       # make a personal link
-    python3 -m tenfoot revoke sam     # it stops working at once
-    python3 -m tenfoot revoke house   # new shared secret: the shared link and the TV's QR code both change
+    tenfoot links          # list links
+    tenfoot link sam       # make a personal link
+    tenfoot revoke sam     # it stops working at once
+    tenfoot revoke house   # new shared secret: the shared link and the TV's QR code both change
 
 Anyone with a link can control the TV. They can't reach this box's own services or addresses on your network from the "open on TV" box.
 
@@ -67,7 +67,7 @@ Anyone with a link can control the TV. They can't reach this box's own services 
     python3 tests/browser/test_sites.py
     python3 tests/browser/test_keyboard.py
     python3 tests/browser/test_service.py   # the real service against a real Chromium; visits YouTube and Shahid
-    python3 tests/box_check.py              # on an installed box: checks the running service, browser and input
+    sudo -u tenfoot -H sh -c 'cd ~/tenfoot && python3 tests/box_check.py'   # on an installed box: the running service, browser and input
 
 ## Credits and licence
 

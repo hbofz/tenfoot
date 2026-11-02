@@ -1,10 +1,21 @@
 #!/bin/sh
-# Undoes install.sh. Leaves ~/.config/tenfoot (your links and settings) and installed packages alone.
+# Undoes install.sh. Run as your admin user. Keeps the TV's user and its settings unless you pass --purge.
+# Installed packages stay.
 set -u
-systemctl --user disable --now tenfoot tenfoot-spotify tenfoot-airplay tenfoot-wallpapers 2>/dev/null
-rm -f "$HOME/.config/systemd/user/tenfoot.service" "$HOME/.config/systemd/user/tenfoot-spotify.service" "$HOME/.config/systemd/user/tenfoot-airplay.service" "$HOME/.config/systemd/user/tenfoot-wallpapers.service"
-systemctl --user daemon-reload
-sed -i '/^# tenfoot kiosk/,/^fi$/d' "$HOME/.profile"
-sudo rm -f /etc/chromium/policies/managed/tenfoot.json /etc/modules-load.d/tenfoot.conf /etc/udev/rules.d/60-tenfoot-uinput.rules /etc/systemd/journald.conf.d/tenfoot.conf
-sudo raspi-config nonint do_boot_behaviour B1
+TV=tenfoot
+if id "$TV" >/dev/null 2>&1; then
+  RUN=/run/user/$(id -u "$TV")
+  sudo -u "$TV" -H env XDG_RUNTIME_DIR="$RUN" systemctl --user disable --now tenfoot tenfoot-spotify tenfoot-airplay tenfoot-wallpapers 2>/dev/null
+  sudo sed -i '/^# tenfoot kiosk/,/^fi$/d' "/home/$TV/.profile"
+  sudo rm -f /home/$TV/.config/systemd/user/tenfoot*.service
+  sudo loginctl disable-linger "$TV"
+fi
+sudo rm -f /etc/chromium/policies/managed/tenfoot.json /etc/modules-load.d/tenfoot.conf /etc/udev/rules.d/60-tenfoot-uinput.rules \
+  /etc/systemd/journald.conf.d/tenfoot.conf /etc/systemd/system/getty@tty1.service.d/autologin.conf /usr/local/bin/tenfoot
+sudo systemctl daemon-reload
+if [ "${1:-}" = --purge ] && id "$TV" >/dev/null 2>&1; then
+  sudo pkill -KILL -u "$TV" 2>/dev/null
+  sleep 1
+  sudo userdel --remove "$TV" 2>/dev/null
+fi
 echo "Removed. Reboot to get your console back: sudo reboot"

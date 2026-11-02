@@ -7,7 +7,7 @@
 # imported through GBM, so they can go on that buffer).
 # Not like Raspberry Pi's build, to be quick: Chromium's own toolchain and sysroot instead of
 # Debian's, no ThinLTO/PGO, no symbols. Output: $WORK/chromium-tenfoot.tar.zst: unpack it in the repo on the
-# Pi (tar -I zstd -xf ... -C ~/tenfoot) and system/kiosk.sh runs chromium/chrome; the system Chromium stays.
+# Pi (see docs/1080p60.md) and system/kiosk.sh runs chromium/chrome; the system Chromium stays.
 #   build.sh            everything, in order (each step skips itself when already done)
 set -ex
 V=155.0.8059.79
