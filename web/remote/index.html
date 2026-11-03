@@ -145,6 +145,7 @@
   .row2 { display: flex; gap: 8px; }
   #sw, .stack { display: grid; gap: 14px; }
   .pill.on { background: var(--fg); color: var(--bg); }
+  a.report { display: grid; place-items: center; text-decoration: none; color: inherit; background: var(--raised); }
   .row2 .pill { flex: 1; }
   .add { color: #1ed760; }
   #sync { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
@@ -663,7 +664,9 @@ async function tvSettings() {
     make("p", { className: "note", textContent: `Clock: ${s.timezone || "not set"}.` }),
     pills([["celsius", "°C"], ["fahrenheit", "°F"]], s.unit, "unit", (l) => `Temperatures in ${l}`),
     pills([["auto", "Update by itself"], ["notify", "Ask me first"]], s.updates, "updates", (l) => l),
-    make("p", { className: "note", textContent: s.updates === "off" ? "Updates are off on this TV (set in its config file)." : "Updates install at night, between 3 and 6." }));
+    make("p", { className: "note", textContent: s.updates === "off" ? "Updates are off on this TV (set in its config file)." : "Updates install at night, between 3 and 6." }),
+    Object.assign(make("a", { className: "pill report", href: "report.txt", textContent: "Get a diagnostic report" }), { download: "" }),
+    make("p", { className: "note", textContent: "A text file about this TV to send whoever helps you with it. Passwords, links and addresses are left out." }));
 }
 async function healthList() {
   try {

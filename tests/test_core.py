@@ -19,7 +19,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, clock, config, health, idle, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, clock, config, health, idle, report, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -338,6 +338,60 @@ class Idle(unittest.TestCase):
         with mock.patch.object(idle, "browser_audio", lambda: True):
             calls = self.run_loop(lambda t: self.page(), mock.Mock(power="on", showing=True), 1200)
         self.assertFalse([js for js in calls if js != idle.PROBE and "tenfoot-dim" in js])
+
+
+class Report(unittest.TestCase):
+    def test_nothing_secret_survives(self):
+        house, guest = "Abc123def456ghi789jkl012", links.guest_token("Abc123def456ghi789jkl012")
+        log = (f"http: GET /{house}/api link=house from=192.168.1.20 ua=Mozilla\n"
+               f"opened https://www.youtube.com/results?search_query=private+stuff and http://10.0.0.5:8096/web/#/x\n"
+               f"qr: http://{guest[:10]}x/ {guest} hotspot pw hunter22pw tailnet box.tail1234.ts.net mac b8:27:eb:12:34:56\n"
+               "sam opened Spotify for spotifyuser42; same thing; Den TV in Lisbon, fe80::1:2:3:4 2a10:50c0:0:0:0:0:ad1:ff\n"
+               "2026-11-03T04:12:33-06:00 tenfoot python3[837]: kiosk: page not answering\n")
+        out = report.redact(log, [house, guest, "hunter22pw", "spotifyuser42"], ["sam", "Den TV", "Lisbon"])
+        for secret in (house, guest, "hunter22pw", "spotifyuser42", "private", "192.168.1.20", "10.0.0.5", "tail1234",
+                       "b8:27:eb", "Den TV", "Lisbon", "fe80"):
+            self.assertNotIn(secret, out)
+        self.assertIn("<url www.youtube.com>", out)  # the host stays: which site
+        self.assertIn("same thing", out)  # a name is replaced as a word, not inside others
+        self.assertIn("2026-11-03T04:12:33-06:00", out)  # times aren't addresses
+        self.assertNotIn("2a10", out)
+        self.assertNotIn("sam opened", out)
+
+    def test_listening_and_other_personal_things(self):
+        log = ('go-librespot[1]: level=info msg="loaded track \\"Bohemian Rhapsody\\" uri=spotify:track:4u7EnebtmKWzUH433cf5Qv"\n'
+               "opened https://www.youtube.com/results?search_query=sam+cooke+live\n"
+               "LISBON lisbon; azzam-tv kernel; mail me@example.com; nmcli ['dev', 'wifi', 'connect', 'Home', 'password', 'hunter2']\n")
+        out = report.redact(log, [], ["sam", "Lisbon", "azzam-tv"])
+        for gone in ("Bohemian", "Rhapsody", "cooke", "LISBON", "lisbon", "azzam-tv", "me@example.com", "hunter2"):
+            self.assertNotIn(gone, out)
+        self.assertIn("(a track: left out)", out)
+        out = report.redact("'password', \"it's-secret\" https://bob:pw123@nas:8096/web", [], [])
+        for gone in ("it's-secret", "bob", "pw123"):
+            self.assertNotIn(gone, out)
+
+    def test_the_hostname_is_personal_unless_its_the_default(self):
+        c = make_controls()
+        with mock.patch.object(report.links, "load_token", lambda: "Abc123def456ghi789jkl012"), \
+                mock.patch.object(report.links, "people", lambda: {}):
+            for host, personal in (("raspberrypi", False), ("tenfoot", False), ("azzam-tv", True)):
+                with mock.patch.object(report.socket, "gethostname", lambda h=host: h):
+                    self.assertEqual(host in report.known_secrets(c)[1], personal, host)
+
+    def test_a_failing_part_doesnt_sink_the_report(self):
+        c = make_controls()
+        with mock.patch.object(report.cec, "connected_device", mock.Mock(side_effect=subprocess.TimeoutExpired("cec-ctl", 10))), \
+                mock.patch.object(report.health, "run", mock.Mock(side_effect=OSError("no nmcli"))), \
+                mock.patch.object(report, "known_secrets", lambda c: (["Abc123def456ghi789jkl012"], [])):
+            text = report.build(c)
+        self.assertIn("== TV over HDMI-CEC ==\n(couldn't: TimeoutExpired", text)
+        self.assertIn("== Settings ==", text)
+        with mock.patch.object(report, "known_secrets", mock.Mock(side_effect=OSError)):
+            with self.assertRaises(OSError):  # no secrets to take out: no report at all
+                report.build(c)
+
+    def test_route_and_who(self):
+        self.assertEqual(links.route("/tok/report.txt", lambda t: "house"), ("report", "house"))
 
 
 class Apps(unittest.TestCase):

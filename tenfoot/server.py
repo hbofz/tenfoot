@@ -3,10 +3,11 @@ localhost only, for the file:// home and Spotify screens."""
 import base64
 import hashlib
 import json
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-from . import clock, health, links, lyrics, updates, visualizer
+from . import clock, health, links, lyrics, report, updates, visualizer
 from .config import WEB_REMOTE
 
 
@@ -49,6 +50,8 @@ def remote_handler(controls, house):
                 return self.end_headers()
             if kind == "ws" and self.headers.get("Upgrade", "").lower() == "websocket":
                 return self.pointer_stream()
+            if kind == "report" and self.name != "guest":  # the household's own box: not for the TV's QR code
+                return self.diagnostic_report()
             if kind != "page":
                 return self.send_error(404)
             body = (WEB_REMOTE / "index.html").read_bytes()
@@ -58,6 +61,25 @@ def remote_handler(controls, house):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def diagnostic_report(self):
+            """tenfoot/report.py's report, as a file to save: the phone's "Get a diagnostic report"."""
+            try:
+                text = report.get(controls)
+            except Exception as ex:
+                print("report: couldn't make one:", repr(ex), flush=True)
+                return self.send_error(500, "Couldn't make the report")
+            if text is None:
+                return self.send_error(429, "A report was just made: try again in half a minute")
+            body = text.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="tenfoot-report-{time.strftime("%Y%m%d-%H%M")}.txt"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

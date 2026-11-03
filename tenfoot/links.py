@@ -70,7 +70,7 @@ def route(path, name_of):
         return None, None
     if len(parts) == 2:
         return "redirect", name
-    return {"": "page", "index.html": "page", "api": "api", "ws": "ws"}.get("/".join(parts[2:])), name
+    return {"": "page", "index.html": "page", "api": "api", "ws": "ws", "report.txt": "report"}.get("/".join(parts[2:])), name
 
 
 def lan_ip():

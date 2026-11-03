@@ -15,8 +15,8 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 7 | Phone Settings page | done |
 | 8 | Fewer SD card writes, power-cut survival | done |
 | 9 | Idle handling inside apps (screensaver, TV standby) | done |
-| 10 | "Send logs" bundle | in progress |
-| 11 | Factory reset and sign-out | |
+| 10 | "Send logs" bundle | done |
+| 11 | Factory reset and sign-out | in progress |
 | 12 | Display adaptivity (720p and 4K TVs) | |
 | 13 | Recently used apps first | |
 
@@ -96,3 +96,9 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - On the test Pi with short timers: dimmed on a page after ~45 s, a phone press woke it without doing anything else; the warning, then pause and dim. **Your TV ignores the CEC "off" command** (many need "turn off with connected devices" switched on in their own settings), so it stays on but dark and still. Worth checking that TV setting.
 - Bugs found on the way: the dim script had a syntax error the browser reported without raising, so the service thought it had dimmed (now every overlay script is compile-tested); a first standby version un-dimmed itself right away.
 - Review: RED (4: dim state drifting after a page change, dimming in the gap between episodes, video in frames unseen, the cursor path not waking), fixed, then GREEN.
+
+### 10. Diagnostic report: done
+- "Get a diagnostic report" in the phone's Settings (not for the guest link) downloads one text file to send whoever helps with the TV: versions, health, updates, settings (an allowlist; never the name or location), screen modes, network type and signal, the TV over HDMI-CEC, and the service's recent log. Nothing is uploaded by the box.
+- Everything personal is taken out of the whole file: link tokens, passwords, names, the hostname, addresses, emails, URL paths (searches), and what was listened to on Spotify (track and episode titles from its log). If the secrets can't be read, there's no report rather than an unredacted one; a section that fails says so and the rest still comes.
+- On the test Pi: a 22 KB report with all 11 sections; the guest link gets nothing; no tokens or tailnet names inside.
+- Review: RED (a hung section sank the whole report; Spotify listening history went into it), fixed, then GREEN.
