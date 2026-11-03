@@ -1,6 +1,6 @@
 #!/bin/sh
 # For your admin user: runs Tenfoot's commands as the TV's own user.
-#   tenfoot links | link NAME | revoke NAME | render | restart | timezone [ZONE]
+#   tenfoot links | link NAME | revoke NAME | render | restart | timezone [ZONE] | reset [--signout] [--keep-wifi]
 T=tenfoot
 RUN=/run/user/$(id -u $T)
 if [ "${1:-}" = restart ]; then

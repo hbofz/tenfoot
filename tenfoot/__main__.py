@@ -1,4 +1,4 @@
-"""python3 -m tenfoot [serve | render | links | link NAME | revoke NAME | timezone [ZONE]]"""
+"""python3 -m tenfoot [serve | render | links | link NAME | revoke NAME | timezone [ZONE] | reset [--signout] [--keep-wifi]]"""
 import glob
 import os
 import socket
@@ -9,7 +9,7 @@ import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from . import browser, cec, clock, config, health, idle, kiosk, links, server, setup, spotify, watcher
+from . import browser, cec, clock, config, health, idle, kiosk, links, server, setup, spotify, watcher, wipe
 from .apps import load_apps
 from .settings import render
 from .controls import Controls
@@ -68,6 +68,8 @@ def alive_loop():
 
 
 def serve(settings):
+    wipe.finish_pending()  # first: a reset cut short leaves old links behind
+    settings = config.load()  # (a reset may have changed them)
     render(settings)
     house = links.load_token()
     cdp = browser.Browser(config.CDP_PORT)
@@ -97,6 +99,13 @@ def serve(settings):
 
 
 def main(args):
+    if args and args[0] == "reset" and set(args[1:]) <= {"--signout", "--keep-wifi"}:  # even with a broken config.toml
+        if "--signout" in args:
+            wipe.sign_out()
+        else:
+            wipe.reset(keep_wifi="--keep-wifi" in args)
+            subprocess.run(["systemctl", "--user", "restart", "tenfoot"])  # new links, new QR code
+        return print("done")
     settings = config.load()
     if not args or args == ["serve"]:
         serve(settings)

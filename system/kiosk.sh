@@ -16,9 +16,15 @@ if [ ! -e "$AUDIO_DONE" ]; then
   HDMI=$(wpctl status 2>/dev/null | sed -n "/Sinks:/,/Sources:/p" | grep HDMI | grep -o "[0-9]\+\." | head -1 | tr -d .)
   if [ -n "$HDMI" ]; then wpctl set-default "$HDMI"; wpctl set-volume "$HDMI" 1.0; wpctl set-mute "$HDMI" 0; touch "$AUDIO_DONE"; fi
 fi
+# Signed out of everything (tenfoot/wipe.py): the whole profile but Widevine goes, now, while the browser isn't running.
+P=$HOME/.config/tenfoot/chromium
+if [ -e "$HOME/.config/tenfoot/wipe-browser" ]; then
+  find "$P" -mindepth 1 -maxdepth 1 ! -name WidevineCdm -exec rm -rf {} + 2>/dev/null
+  rm -rf /tmp/tenfoot-chromium-cache
+  rm -f "$HOME/.config/tenfoot/wipe-browser"
+fi
 # Low on space (under 1 GB: tenfoot/health.py warns at the same point): clear what Chromium rebuilds by itself, never
 # sign-ins (Cookies, Local Storage, IndexedDB). Only here, before it starts: it holds these files open while it runs.
-P=$HOME/.config/tenfoot/chromium
 if [ "$(df --output=avail -k "$P" 2>/dev/null | tail -1)" -lt 1048576 ] 2>/dev/null; then
   rm -rf "$P/Default/Service Worker/CacheStorage" "$P/Default/Service Worker/ScriptCache" "$P/Default/Code Cache" \
     "$P/Default/GPUCache" "$P/GPUCache" "$P/GrShaderCache" "$P/GraphiteDawnCache" "$P/ShaderCache" "$P/component_crx_cache"

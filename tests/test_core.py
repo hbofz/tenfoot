@@ -19,7 +19,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, clock, config, health, idle, report, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, clock, config, health, idle, report, wipe, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -392,6 +392,179 @@ class Report(unittest.TestCase):
 
     def test_route_and_who(self):
         self.assertEqual(links.route("/tok/report.txt", lambda t: "house"), ("report", "house"))
+
+
+class Wipe(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.conf = self.home / ".config/tenfoot"
+        self.conf.mkdir(parents=True)
+        (self.conf / "config.toml").write_text('name = "Den"\nlatitude = 1.5\nplace = "Lisbon"\nupdates = "notify"\n'
+                                                'display_mode = "1280x720@60"\njellyfin_url = "http://192.168.1.20:8096"\n')
+        for f in ("token", "people", "setup-password", "timezone-set"):
+            (self.conf / f).write_text("x")
+        (self.home / ".config/go-librespot/profiles").mkdir(parents=True)
+        (self.home / ".config/go-librespot/state.json").write_text("{}")
+        (self.home / ".config/go-librespot/profiles/a").write_text("")
+        self.calls = []
+
+        def run(*args):
+            self.calls.append(args)
+            out = "u1:802-11-wireless\nu2:loopback\nu3:802-11-wireless\n" if args[:2] == ("nmcli", "-t") else ""
+            return mock.Mock(stdout=out, returncode=0)
+        for p in (mock.patch.object(config, "CONFIG_DIR", self.conf), mock.patch.object(wipe, "CONFIG_DIR", self.conf),
+                  mock.patch.object(wipe.Path, "home", lambda: self.home), mock.patch.object(wipe, "run", run),
+                  mock.patch.object(wipe.kiosk, "restart_chromium", lambda p: self.calls.append(("restart chromium",))),
+                  mock.patch.object(wipe, "_asked", {}), mock.patch.object(wipe.getpass, "getuser", lambda: "tenfoot"),
+                  mock.patch.object(wipe.phone_settings, "rename_services", lambda n: self.calls.append(("rename", n))),
+                  mock.patch.object(config, "RUN", self.home / "run"), mock.patch.object(wipe.time, "sleep", lambda s: None),
+                  mock.patch.object(wipe, "_asked_at", [-1e9])):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tv(self, own_page=True):
+        """A browser whose page is the TV's own (file://) or a website's: SHOW only works on the first."""
+        b = FakeBrowser()
+        b.shown = []
+
+        def evaluate(js):
+            if "location.protocol" in js:
+                if own_page:
+                    b.shown.append(js)
+                return {"result": {"value": own_page}}
+            return {}
+        b.evaluate = evaluate
+        return b
+
+    def ask(self, kind="reset", b=None):
+        wipe._asked_at[0] = -1e9  # (no 20 s wait between asks in a test)
+        b = b or self.tv()
+        wipe.ask(kind, b)
+        return wipe._asked.get("code"), b
+
+    def test_code_rules(self):
+        code, b = self.ask()
+        self.assertIn(code, b.shown[-1])  # shown on the TV
+        self.assertIn('location.protocol !== "file:"', b.shown[-1])  # and only on its own page
+        with self.assertRaises(ValueError):
+            wipe.confirm("signout", code)  # asked for a reset, not this
+        code, _ = self.ask()
+        for _ in range(2):
+            with self.assertRaises(ValueError):
+                wipe.confirm("reset", "nope")
+        self.assertTrue(wipe.confirm("reset", code))
+        with self.assertRaises(ValueError):
+            wipe.confirm("reset", code)  # used up
+        code, _ = self.ask("signout")
+        wipe._asked["until"] = 0
+        with self.assertRaises(ValueError):
+            wipe.confirm("signout", code)  # ran out
+
+    def test_no_guessing_by_asking_again(self):
+        self.ask()
+        for _ in range(3):
+            with self.assertRaises(ValueError):
+                wipe.confirm("reset", "nope")
+        with self.assertRaises(ValueError) as e:
+            self.ask()  # three wrong: locked for a while, not a fresh three
+        self.assertIn("Too many", str(e.exception))
+        g = wipe.guard()
+        wipe.save_guard({**g, "locked_until": 0})
+        self.ask()
+        for _ in range(3):
+            with self.assertRaises(ValueError):
+                wipe.confirm("reset", "nope")
+        self.assertGreater(wipe.guard()["locked_until"] - wipe.time.time(), 100)  # and longer each round
+        wipe.save_guard({**wipe.guard(), "locked_until": 0})
+        wipe._asked_at[0] = wipe.time.monotonic()
+        with self.assertRaises(ValueError):
+            wipe.ask("reset", self.tv())  # a code already up: not another one straight away
+
+    def test_a_restart_doesnt_forget_the_lock(self):
+        self.ask()
+        for _ in range(3):
+            with self.assertRaises(ValueError):
+                wipe.confirm("reset", "nope")
+        wipe._asked.clear()  # the service started again: nothing in memory
+        with self.assertRaises(ValueError) as e:
+            self.ask()
+        self.assertIn("Too many", str(e.exception))
+
+    def test_no_guessing_when_the_disk_is_full(self):
+        self.ask()
+        with mock.patch.object(config, "write_private", mock.Mock(side_effect=OSError(28, "No space left"))):
+            with self.assertRaises(ValueError):
+                wipe.confirm("reset", "nope")
+            self.assertEqual(wipe._asked, {})  # that code is gone
+            with self.assertRaises(ValueError):
+                self.ask()  # and no new one while nothing can be counted
+
+    def test_a_right_code_clears_the_count(self):
+        code, _ = self.ask()
+        with self.assertRaises(ValueError):
+            wipe.confirm("reset", "nope")
+        wipe.confirm("reset", code)
+        self.assertEqual(wipe.guard()["wrong"], 0)
+
+    def test_no_guessing_two_at_a_time(self):
+        self.ask()
+        for _ in range(2):
+            with self.assertRaises(ValueError):
+                wipe.confirm("reset", "nope")
+        self.ask()  # a fresh code, but the wrong ones still count
+        with self.assertRaises(ValueError):
+            wipe.confirm("reset", "nope")
+        with self.assertRaises(ValueError) as e:
+            self.ask()
+        self.assertIn("Too many", str(e.exception))
+
+    def test_never_shown_on_a_website(self):
+        with self.assertRaises(ValueError):
+            self.ask(b=self.tv(own_page=False))
+        self.assertEqual(wipe._asked, {})
+
+    def test_reset(self):
+        wipe.reset()
+        for f in ("token", "people", "setup-password", "timezone-set", "reset-pending"):
+            self.assertFalse((self.conf / f).exists(), f)
+        self.assertTrue((self.conf / "wipe-browser").exists())  # the browser's profile goes as it starts again
+        self.assertFalse((self.home / ".config/go-librespot/state.json").exists())
+        self.assertFalse(list((self.home / ".config/go-librespot/profiles").iterdir()))
+        s = config.load(self.conf / "config.toml")
+        self.assertEqual((s.name, s.latitude, s.place, s.updates), ("Tenfoot", None, "", "auto"))
+        self.assertEqual((s.display_mode, s.jellyfin_url), ("1280x720@60", "http://192.168.1.20:8096"))  # the admin's stay
+        self.assertIn(("nmcli", "connection", "delete", "uuid", "u1"), self.calls)
+        self.assertIn(("nmcli", "connection", "delete", "uuid", "u3"), self.calls)
+        self.assertNotIn(("nmcli", "connection", "delete", "uuid", "u2"), self.calls)
+        self.assertIn(("rename", "Tenfoot"), self.calls)  # Spotify and AirPlay go back to the plain name
+
+    def test_only_on_the_tv_box(self):
+        with mock.patch.object(wipe.getpass, "getuser", lambda: "bb"):
+            with self.assertRaises(SystemExit):
+                wipe.reset()  # a developer's laptop keeps its Wi-Fi
+        self.assertTrue((self.conf / "token").exists())
+
+    def test_keep_wifi_and_a_developers_off(self):
+        (self.conf / "config.toml").write_text('updates = "off"\n')
+        wipe.reset(keep_wifi=True)
+        self.assertFalse([c for c in self.calls if c[:3] == ("nmcli", "connection", "delete")])
+        self.assertEqual(config.load(self.conf / "config.toml").updates, "off")
+
+    def test_reset_mends_a_broken_config(self):
+        (self.conf / "config.toml").write_text('name = "a"\nname = "b"\n')  # not TOML
+        wipe.reset(keep_wifi=True)
+        self.assertEqual(config.load(self.conf / "config.toml").name, "Tenfoot")
+
+    def test_a_reset_cut_short_finishes(self):
+        (self.conf / "reset-pending-keep-wifi").write_text("")
+        wipe.finish_pending()
+        self.assertFalse([c for c in self.calls if c[:3] == ("nmcli", "connection", "delete")])  # its choice kept
+        self.assertFalse((self.conf / "token").exists())
+        self.assertFalse((self.conf / "reset-pending-keep-wifi").exists())
+
+    def test_not_for_guests(self):
+        with self.assertRaises(ValueError):
+            make_controls().handle({"a": "wipe", "k": "reset", "by": "guest"})
 
 
 class Apps(unittest.TestCase):

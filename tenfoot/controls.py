@@ -6,7 +6,7 @@ from .apps import app_of, app_urls, page_url, to_url
 from .cursor import Cursor
 from .inputs import KEYS
 from .overlay import toast_js, volume_js
-from . import clock, health, idle, settings as phone_settings, updates
+from . import clock, health, idle, settings as phone_settings, updates, wipe
 
 SINK = "@DEFAULT_AUDIO_SINK@"
 PASSIVE = {"state", "apps", "health", "settings", "update", "timezone"}  # the phone checking in: not someone at the remote
@@ -87,6 +87,27 @@ class Controls:
                 raise ValueError(f"Saved, but couldn't set the clock: {ex}") from None
         return phone_settings.current(self.settings)
 
+    def wipe(self, kind, cmd):
+        """Sign out of everything, or reset (tenfoot/wipe.py): first a code on the TV, then that code from the phone."""
+        if cmd.get("by") == "guest":
+            raise ValueError("Guests can't do that")
+        if "code" not in cmd:
+            wipe.ask(kind, self.browser)
+            return {"asked": True}
+        wipe.confirm(kind, cmd["code"])
+        if kind == "signout":
+            threading.Thread(target=wipe.sign_out, daemon=True).start()
+        else:  # after this reply: the phone loses the TV (new links, Wi-Fi forgotten), and the service starts again
+            threading.Timer(1.5, self.reset_then_restart).start()
+        return {"done": kind}
+
+    @staticmethod
+    def reset_then_restart():
+        try:
+            wipe.reset()
+        finally:  # always: until it starts again, the old links still work
+            subprocess.run(["systemctl", "--user", "restart", "tenfoot"])
+
     def go(self, url):
         self.browser.one_tab()
         self.browser.navigate(url)
@@ -134,6 +155,8 @@ class Controls:
             if k == "set":
                 return self.change_settings(cmd)
             return {"canChange": False} if cmd.get("by") == "guest" else {**phone_settings.current(self.settings), "canChange": True}
+        elif a == "wipe":
+            return self.wipe(k, cmd)
         elif a == "health":
             return health.status()
         elif a == "timezone":

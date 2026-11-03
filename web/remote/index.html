@@ -145,6 +145,7 @@
   .row2 { display: flex; gap: 8px; }
   #sw, .stack { display: grid; gap: 14px; }
   .pill.on { background: var(--fg); color: var(--bg); }
+  .pill.danger { color: var(--danger); }
   a.report { display: grid; place-items: center; text-decoration: none; color: inherit; background: var(--raised); }
   .row2 .pill { flex: 1; }
   .add { color: #1ed760; }
@@ -622,6 +623,19 @@ function button(label, cls, onclick) {
 $("gear").addEventListener("click", () => { tick(); $("settings").showModal(); tvSettings(); accounts(); software(); healthList(); });
 // The TV's own settings (tenfoot/settings.py): name, the weather's place (which sets the clock's timezone too), its
 // unit, and updates. Not for the guest link. The place search asks Open-Meteo straight from this phone.
+// Sign out / reset (tenfoot/wipe.py): the TV shows a code, typed here, so nobody can do it without seeing the screen.
+function wipeButton(kind, label, question) {
+  return button(label, "pill danger", async () => {
+    if (!confirm(question)) return;
+    try {
+      await api({ a: "wipe", k: kind });
+      const code = prompt("Type the 4-digit code the TV is showing:");
+      if (!code) return;
+      await api({ a: "wipe", k: kind, code: code.trim() });
+      toast(kind === "reset" ? "Resetting. Set the TV up again from its screen." : "Signing out of everything.", 6000);
+    } catch (e) { toast(why(e)); }
+  });
+}
 async function tvSettings() {
   const box = $("tvSet"), make = (tag, props) => Object.assign(document.createElement(tag), props);
   let s;
@@ -666,7 +680,9 @@ async function tvSettings() {
     pills([["auto", "Update by itself"], ["notify", "Ask me first"]], s.updates, "updates", (l) => l),
     make("p", { className: "note", textContent: s.updates === "off" ? "Updates are off on this TV (set in its config file)." : "Updates install at night, between 3 and 6." }),
     Object.assign(make("a", { className: "pill report", href: "report.txt", textContent: "Get a diagnostic report" }), { download: "" }),
-    make("p", { className: "note", textContent: "A text file about this TV to send whoever helps you with it. Passwords, links and addresses are left out." }));
+    make("p", { className: "note", textContent: "A text file about this TV to send whoever helps you with it. Passwords, links and addresses are left out." }),
+    wipeButton("signout", "Sign out of everything", "Sign this TV out of every app and Spotify? Saved Wi-Fi and settings stay."),
+    wipeButton("reset", "Reset this TV", "Reset this TV to how it came? It signs out of everything, forgets its Wi-Fi and settings, and every phone's link stops working."));
 }
 async function healthList() {
   try {

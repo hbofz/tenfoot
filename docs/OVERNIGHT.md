@@ -16,8 +16,8 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 8 | Fewer SD card writes, power-cut survival | done |
 | 9 | Idle handling inside apps (screensaver, TV standby) | done |
 | 10 | "Send logs" bundle | done |
-| 11 | Factory reset and sign-out | in progress |
-| 12 | Display adaptivity (720p and 4K TVs) | |
+| 11 | Factory reset and sign-out | done |
+| 12 | Display adaptivity (720p and 4K TVs) | in progress |
 | 13 | Recently used apps first | |
 
 Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per site, Bluetooth pairing, home screen design and icons, a smart plug for real power-cut tests.
@@ -102,3 +102,10 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - Everything personal is taken out of the whole file: link tokens, passwords, names, the hostname, addresses, emails, URL paths (searches), and what was listened to on Spotify (track and episode titles from its log). If the secrets can't be read, there's no report rather than an unredacted one; a section that fails says so and the rest still comes.
 - On the test Pi: a 22 KB report with all 11 sections; the guest link gets nothing; no tokens or tailnet names inside.
 - Review: RED (a hung section sank the whole report; Spotify listening history went into it), fixed, then GREEN.
+
+### 11. Sign out of everything, and reset: done
+- In the phone's Settings: "Sign out of everything" (every app's login in the browser, and Spotify's accounts; Wi-Fi and settings stay) and "Reset this TV" (that, plus new links so every phone's stops working, the TV's personal settings back to defaults, its timezone, and saved Wi-Fi forgotten so the setup screen comes up). `tenfoot reset [--signout] [--keep-wifi]` does it from SSH.
+- Both need a 4-digit code shown on the TV and typed on the phone, so nobody can do it without seeing the screen. The code is only ever shown on the TV's own home screen (a website on screen could read it otherwise), and wrong codes add up across tries, restarts and asks: every third locks it out for longer (1, 2, 4... minutes), counted on disk before any guess is checked.
+- A reset cut short by a power cut finishes on the next start.
+- On the test Pi: sign-out through the phone cleared a 182 MB browser profile (Widevine kept, DRM still working); a reset (keeping Wi-Fi) changed the links and QR code and cleared the personal settings; the code showed on the home screen even when asked from a website; three wrong codes locked it.
+- Review: RED five times, all about guessing the code without seeing the TV (asking again for a fresh 3 tries; a website reading the code; a rename restarting the service to forget the count; a full disk not counting). Each closed, then GREEN.

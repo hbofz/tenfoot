@@ -47,6 +47,15 @@ def edit(text, values):
     return "\n".join(lines) + "\n"
 
 
+def unset(keys):
+    """Take keys out of config.toml (back to their defaults), keeping the rest and its comments."""
+    path = config.CONFIG_DIR / "config.toml"
+    with lock:
+        lines = path.read_text().splitlines()
+        keep = [ln for ln in lines if not any(re.match(rf'\s*"?{k}"?\s*=', ln) for k in keys)]
+        config.write_private(path, "\n".join(keep) + "\n")
+
+
 def current(settings):
     return {"name": settings.name, "place": settings.place, "latitude": settings.latitude, "longitude": settings.longitude,
             "unit": settings.temperature_unit, "updates": settings.updates, "timezone": clock.current()}
