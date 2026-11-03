@@ -59,6 +59,10 @@ Anyone with a link can control the TV. They can't reach this box's own services 
 | `system/` | Kiosk launcher, browser policy, service files |
 | `patches/` | The Chromium and wlroots builds for 1080p60 |
 
+## Status
+
+What works, how it was tested, and what's left before a public release: [docs/STATUS.md](docs/STATUS.md).
+
 ## Tests
 
     pip install websocket-client qrcode cryptography numpy evdev playwright && playwright install chromium
