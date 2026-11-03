@@ -18,6 +18,7 @@
   "SyncDisabled": true,
   "TranslateEnabled": false,
   "MetricsReportingEnabled": false,
+  "SavingBrowserHistoryDisabled": true,
   "SearchSuggestEnabled": true,
   "SafeBrowsingProtectionLevel": 1,
   "BackgroundModeEnabled": false,

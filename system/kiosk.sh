@@ -1,5 +1,6 @@
 #!/bin/sh
-# Runs inside cage on tty1: one full-screen Chromium, its own profile, on the home screen.
+# Runs inside cage on tty1: one full-screen Chromium, its own profile, on the home screen. After a power cut, no
+# "restore pages?" bubble (a remote can't close it), and no history kept (written on every visit, and nothing reads it).
 # No back/forward cache: leaving an app really closes it (a Pi can't keep YouTube around).
 # The disk cache lives in RAM (/tmp is tmpfs): faster, and no wear on the drive.
 # Extra browser flags go in ~/.config/tenfoot/kiosk.env, one quoted argument each:
@@ -40,6 +41,7 @@ exec "$CHROMIUM" \
   --no-first-run \
   --noerrdialogs \
   --disable-infobars \
+  --hide-crash-restore-bubble \
   --password-store=basic \
   --check-for-update-interval=31536000 \
   --remote-debugging-port=9222 \

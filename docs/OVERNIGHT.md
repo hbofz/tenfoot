@@ -13,8 +13,8 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 5 | YouTube ad blocking | done (a real pre-roll not seen yet) |
 | 6 | OS security updates (Widevine included) | done (kernel not yet) |
 | 7 | Phone Settings page | done |
-| 8 | Fewer SD card writes, power-cut survival | in progress |
-| 9 | Idle handling inside apps (screensaver, TV standby) | |
+| 8 | Fewer SD card writes, power-cut survival | done |
+| 9 | Idle handling inside apps (screensaver, TV standby) | in progress |
 | 10 | "Send logs" bundle | |
 | 11 | Factory reset and sign-out | |
 | 12 | Display adaptivity (720p and 4K TVs) | |
@@ -79,3 +79,11 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - Saved into config.toml without losing its comments, checked before it's written.
 - On the test Pi, through the running service: everything landed (config, home screen, Spotify's name, the system clock); guest and bad names refused. Put back afterwards.
 - Review: GREEN, with small fixes taken (a name starting with "-" would have crashed AirPlay).
+
+### 8. SD card and power cuts: done
+- Measured on the test Pi first: about 5 MB written to the card every 4 minutes with the browser open (mostly the browser's profile and the system log), so roughly 75 MB an hour. Even always-on, that's far below what an SD card tolerates for years: wear isn't the real risk, power cuts are.
+- Raspberry Pi OS already does the important things (no access-time writes, a filesystem repair at boot, swap compressed in RAM); the image build now refuses a base image that stops doing them. Its swap does keep a file on the card (/var/swap) for pages idle for hours, written at most once a day: left as it is.
+- Turned off browser history (written on every page visit, read by nothing), and the "restore pages?" bubble after a power cut (a remote can't close it).
+- Power-cut test, without a smart plug: 5 forced instant resets (sysrq-b) during YouTube. Every time it came back by itself in under 1.5 minutes, 0 filesystem errors, browser and service up, no dialogs. (A forced reset keeps the card powered, so it's not quite a real cut: a smart plug would test that.)
+- Not done on purpose: a read-only system (it would lose saved Wi-Fi, logins and updates), the browser profile in RAM (loses logins on a cut).
+- Review: GREEN.

@@ -48,6 +48,10 @@ The system's own packages: Raspberry Pi OS Lite installs no updates by itself, s
 
 Tested 2026-11-03 on the real Pi (SD-card image) from a local test feed: "Update now" through polkit as the TV's user, 0.1.0 to 0.1.1 (installed, rebooted, kept after 2 minutes), then a release whose service crashes (installed, rebooted, rolled back to 0.1.1 about 8 minutes later, never offered again). Unit tests in `tests/test_update.py`. Not yet tried against a real GitHub release, or with the Chromium build (updates replace Tenfoot's own files only; the patched Chromium stays as it is).
 
+## SD card and power cuts
+
+Measured: about 75 MB an hour written to the card with the browser open, mostly the browser's profile and the system log. Raspberry Pi OS already mounts root `noatime`, repairs the filesystem at boot (`fsck.repair=yes`) and keeps swap compressed in RAM; `tools/build-image.sh` checks those. Its swap (`rpi-swap`) also keeps `/var/swap` on the card for pages idle for hours, written by a daily timer at most. Browser history is off and the crash "restore" bubble hidden. Five forced resets (`sysrq-b`) during YouTube all came back cleanly with no filesystem errors; a real power cut (the card losing power mid-write) needs a smart plug to test.
+
 ## Left before a public release
 
 1. **Design pass.** The home screen tiles are plain coloured placeholders. The plan: the installer downloads each app's icon onto the box from an open icon collection, so no logos live in this repo. The home screen look itself still needs a direction from the owner.

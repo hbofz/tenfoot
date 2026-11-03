@@ -38,6 +38,11 @@ sudo e2fsck -pf "${LOOP}p2" >/dev/null || [ $? -le 1 ]
 sudo resize2fs "${LOOP}p2" >/dev/null
 sudo mount "${LOOP}p2" "$M"
 sudo mount "${LOOP}p1" "$M/boot/firmware"
+# What keeps an SD card well through power cuts, all Raspberry Pi OS's own defaults: checked, not assumed, in case a
+# new base image drops one. No access-time writes, a repaired filesystem at boot, no swap file in fstab (Raspberry Pi OS's swap is zram, in RAM).
+grep -Eq '^\s*[^#[:space:]]\S*\s+/\s+ext4\s+\S*noatime' "$M/etc/fstab" || { echo "base image: root isn't mounted noatime" >&2; exit 1; }
+grep -q 'fsck.repair=yes' "$M/boot/firmware/cmdline.txt" || { echo "base image: no fsck.repair=yes" >&2; exit 1; }
+! grep -Eqs '^\s*[^#[:space:]]\S*\s+\S+\s+swap' "$M/etc/fstab" || { echo "base image: a swap file on the card" >&2; exit 1; }
 sudo mount --bind /dev "$M/dev"
 sudo mount --bind /dev/pts "$M/dev/pts"
 sudo mount -t proc proc "$M/proc"
