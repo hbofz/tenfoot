@@ -40,6 +40,12 @@ On any Linux PC with `qemu-user-static`, `parted`, `e2fsprogs`, `xz-utils` and `
 - `WALLPAPERS_DIR`: a finished `web/home/wallpapers` folder from `python3 tools/wallpapers.py`, which includes `CREDITS.txt`.
 - `VIDEO_DIR`: the 1080p60 builds, `chromium-*.tar.zst` from `patches/chromium/build.sh` and `libwlroots-0.20.so` from `patches/wlroots/build.sh`. See [1080p60.md](1080p60.md).
 
+## Updates
+
+`system/tenfoot-update` (root, from `/usr/local/sbin`) checks GitHub Releases four times a day, installs a newer release signed by the key `tools/release.py` holds, reboots, and rolls back if the service (or the browser, if it was up) doesn't answer within 5 minutes. To release: bump `VERSION`, commit, `tools/release.py publish --notes "..."`. The signing key is `~/.config/tenfoot-release/signing.key` on Hamzah's PC; every box trusts only it, so it must be backed up.
+
+Tested 2026-11-03 on the real Pi (SD-card image) from a local test feed: "Update now" through polkit as the TV's user, 0.1.0 to 0.1.1 (installed, rebooted, kept after 2 minutes), then a release whose service crashes (installed, rebooted, rolled back to 0.1.1 about 8 minutes later, never offered again). Unit tests in `tests/test_update.py`. Not yet tried against a real GitHub release, or with the Chromium build (updates replace Tenfoot's own files only; the patched Chromium stays as it is).
+
 ## Left before a public release
 
 1. **Design pass.** The home screen tiles are plain coloured placeholders. The plan: the installer downloads each app's icon onto the box from an open icon collection, so no logos live in this repo. The home screen look itself still needs a direction from the owner.

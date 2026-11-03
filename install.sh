@@ -56,6 +56,9 @@ fi
 sudo tee /etc/polkit-1/rules.d/50-tenfoot.rules >/dev/null <<POLKIT
 polkit.addRule(function (action, subject) {
   if (subject.user == "$TV" && action.id.indexOf("org.freedesktop.NetworkManager.") == 0) return polkit.Result.YES;
+  // The phone's "Update now": start the updater, nothing else. It only ever installs a newer, signed release.
+  if (subject.user == "$TV" && action.id == "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") == "tenfoot-update-now.service" && action.lookup("verb") == "start") return polkit.Result.YES;
 });
 POLKIT
 sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
@@ -67,6 +70,25 @@ echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/60-tenfoo
 sudo mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n' | sudo tee /etc/systemd/journald.conf.d/tenfoot.conf >/dev/null
 [ "$IMAGE" = 1 ] || sudo systemctl restart systemd-journald
+
+# Updates (system/tenfoot-update): root's own copy of the updater and its timer, and a copy of this release to go back
+# to if the next one doesn't work. Run by the updater itself, this already is that copy.
+U=/var/lib/tenfoot-update
+V=$(cat "$SRC/VERSION")
+sudo install -d -m 755 "$U" "$U/releases"
+sudo install -m 755 "$SRC/system/tenfoot-update" /usr/local/sbin/tenfoot-update
+for f in tenfoot-update.service tenfoot-update-now.service tenfoot-update.timer; do sudo install -m 644 "$SRC/system/$f" /etc/systemd/system/; done
+case "$SRC" in
+  "$U/releases/"*) ;;
+  *) sudo rm -rf "$U/releases/$V"
+     sudo mkdir "$U/releases/$V"
+     tar -C "$SRC" --exclude=.git --exclude=__pycache__ --exclude=web/home/run --exclude=web/home/wallpapers --exclude=chromium \
+       --exclude=wlroots-build --exclude=spotify -cf - . | sudo tar -xf - --no-same-owner -C "$U/releases/$V" ;;
+esac
+echo "$V" | sudo tee "$U/version" >/dev/null
+[ "$IMAGE" = 1 ] || sudo systemctl daemon-reload
+sudo systemctl enable tenfoot-update.timer 2>/dev/null
+[ "$IMAGE" = 1 ] || sudo systemctl start tenfoot-update.timer
 
 # Boot to a console logged in as the TV's user on tty1; its ~/.profile starts the kiosk.
 # Not named autologin.conf: on a fresh image something at first boot took that one away (see system tools' use of it).

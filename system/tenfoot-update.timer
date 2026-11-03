@@ -1,0 +1,11 @@
+[Unit]
+Description=Tenfoot: look for updates a few times a day, and finish one after its reboot
+
+[Timer]
+# Soon after boot, so a broken update is rolled back within minutes. No random delay: it would apply here too.
+OnBootSec=2min
+# 04:00 is inside the updater's night window (03-05), so an automatic update lands while nobody's watching.
+OnCalendar=*-*-* 04,10,16,22:00:00
+
+[Install]
+WantedBy=timers.target

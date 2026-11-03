@@ -269,6 +269,25 @@ for (let s = 2; s <= 60; s += 2) setTimeout(async () => {
   } catch {}  // the service is still starting
 }, s * 1000);
 
+// ---------- An update's news, from the updater (system/tenfoot-update) through the service ----------
+function updateNews(u) {  // -> [title, detail], or null for nothing to say
+  if (u.state === "downloading" || u.state === "installing") return ["Updating Tenfoot", "The TV restarts by itself in a few minutes."];
+  if (u.error && Date.now() / 1000 - (u.error_at || 0) < 86400) return ["The update didn't work", u.error];
+  if (u.available) return [`Tenfoot ${u.available.version} is ready`, u.mode === "auto"
+    ? "It installs tonight. To install it now, open Settings on the phone remote."
+    : "To install it, open Settings on the phone remote."];
+  return null;
+}
+async function pollUpdate() {
+  try {
+    const news = updateNews(await (await fetch("http://127.0.0.1:8766/update", { cache: "no-store", signal: AbortSignal.timeout(1500) })).json());
+    $("upd").hidden = !news;
+    if (news) [$("upd").firstElementChild.textContent, $("upd").lastElementChild.textContent] = news;
+  } catch {}  // the service is restarting
+}
+setTimeout(pollUpdate, 3000);
+setInterval(pollUpdate, 60 * 1000);
+
 // ---------- Just the picture: Up from the top row, or the screensaver after SAVER seconds idle (?saver=N) ----------
 const SAVER = +(params.get("saver") || 600);
 let idleTimer, placeTimer, rotateTimer;

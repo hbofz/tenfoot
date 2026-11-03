@@ -10,6 +10,9 @@ if id "$TV" >/dev/null 2>&1; then
   sudo rm -f /home/$TV/.config/systemd/user/tenfoot*.service
   sudo loginctl disable-linger "$TV"
 fi
+sudo systemctl disable --now tenfoot-update.timer 2>/dev/null
+sudo rm -rf /var/lib/tenfoot-update /usr/local/sbin/tenfoot-update /etc/systemd/system/tenfoot-update.service \
+  /etc/systemd/system/tenfoot-update-now.service /etc/systemd/system/tenfoot-update.timer
 sudo rm -f /etc/chromium/policies/managed/tenfoot.json /etc/modules-load.d/tenfoot.conf /etc/udev/rules.d/60-tenfoot-uinput.rules \
   /etc/systemd/journald.conf.d/tenfoot.conf /etc/polkit-1/rules.d/50-tenfoot.rules \
   /etc/NetworkManager/dnsmasq-shared.d/tenfoot.conf /etc/sysctl.d/60-tenfoot.conf /etc/systemd/system/getty@tty1.service.d/tenfoot-autologin.conf /usr/local/bin/tenfoot

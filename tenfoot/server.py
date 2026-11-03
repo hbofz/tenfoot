@@ -6,7 +6,7 @@ import json
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-from . import links, lyrics, visualizer
+from . import links, lyrics, updates, visualizer
 from .config import WEB_REMOTE
 
 
@@ -130,6 +130,8 @@ class Local(BaseHTTPRequestHandler):
         if url.path == "/setup":
             status = self.wifi_setup.status() if self.wifi_setup else {"state": "off"}
             return self.reply(200, json.dumps(status).encode())
+        if url.path == "/update":
+            return self.reply(200, json.dumps(updates.status()).encode())
         if url.path == "/lyrics":
             q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             try:

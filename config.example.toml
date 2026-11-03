@@ -20,3 +20,9 @@ spotify = true
 # Input devices to use as TV remotes, as full-match patterns on the device's name.
 # HDMI-CEC remotes show up as vc4-hdmi-N. Add a Bluetooth or USB remote by name:
 # remote_devices = ["vc4-hdmi-\\d+", "My Remote"]
+
+# Updates, signed by Tenfoot's release key, from GitHub:
+#   "auto"    installs a new release between 3 and 6 at night, then restarts
+#   "notify"  says on the TV that one's ready; install it from Settings on the phone remote
+#   "off"     doesn't look (for a box you develop on)
+# updates = "auto"

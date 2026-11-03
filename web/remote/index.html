@@ -143,6 +143,7 @@
   .acct .x { width: 48px; height: 48px; border-radius: 14px; color: var(--muted); }
   .acct .locked { opacity: .5; }
   .row2 { display: flex; gap: 8px; }
+  #sw { display: grid; gap: 14px; }
   .row2 .pill { flex: 1; }
   .add { color: #1ed760; }
   #sync { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
@@ -239,6 +240,8 @@
   <h3>Lyrics timing</h3>
   <div id="sync"></div>
   <p class="note">Nudge if the lyrics run ahead of or behind the music.</p>
+  <h3>Software</h3>
+  <div id="sw"></div>
   <h3>Help</h3>
   <details><summary>Cast from your phone's YouTube app</summary>
     <p>Works from anywhere, no shared Wi-Fi needed. Link your phone once:</p>
@@ -610,7 +613,26 @@ function button(label, cls, onclick) {
   b.onclick = onclick;
   return b;
 }
-$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); accounts(); });
+$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); accounts(); software(); });
+async function software() {
+  const note = (text) => Object.assign(document.createElement("p"), { className: "note", textContent: text });
+  try {
+    const u = await api({ a: "update" }), kids = [];
+    if (u.state === "downloading" || u.state === "installing") kids.push(note(`Updating from ${u.version}. The TV restarts by itself in a few minutes.`));
+    else if (u.available) {
+      kids.push(note(`Tenfoot ${u.available.version} is ready (this TV has ${u.version}).${u.mode === "auto" ? " It installs tonight by itself." : ""}`));
+      if (u.available.notes) kids.push(note(u.available.notes));
+      kids.push(Object.assign(document.createElement("div"), { className: "row2" }));
+      kids.at(-1).append(button("Update now", "pill", async () => {
+        if (!confirm("The TV restarts while it updates, which takes a few minutes. Update now?")) return;
+        try { await api({ a: "update", k: "now" }); toast("Updating. The TV restarts by itself."); } catch (e) { toast(why(e)); }
+        setTimeout(software, 3000);
+      }));
+    } else kids.push(note(`Tenfoot ${u.version}, up to date.${u.mode === "off" ? " Updates are off on this TV." : ""}`));
+    if (u.error) kids.push(note(u.error));
+    $("sw").replaceChildren(...kids);
+  } catch (e) { $("sw").replaceChildren(note(why(e))); }
+}
 async function accounts() {
   try {
     const { active, accounts, lyricsMs } = await api({ a: "spotify", k: "list" });

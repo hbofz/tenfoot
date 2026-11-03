@@ -25,7 +25,7 @@ You need your own subscriptions: Tenfoot plays what your accounts already can, t
 
 It boots into the home screen. One wallpaper comes with the install; the rest download in the background and can take hours, and the home screen uses what it has so far.
 
-To update, `git pull` in your clone and run `install.sh` again. Undo it with `uninstall.sh`; add `--purge` to delete the TV's user, its logins and settings too.
+It updates itself: new releases are signed, installed at night (or from Settings on the phone remote) and rolled back if they don't start. The `updates` setting turns that to notify-only or off; to update by hand, `git pull` in your clone and run `install.sh` again. Undo it with `uninstall.sh`; add `--purge` to delete the TV's user, its logins and settings too.
 
 ## Settings
 

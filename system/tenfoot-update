@@ -1,0 +1,286 @@
+#!/usr/bin/python3
+"""Tenfoot's updater. Runs as root from systemd, from a root-owned copy (/usr/local/sbin), never from the TV user's
+files: a hacked browser runs as that user and must not be able to change what root runs.
+
+  tenfoot-update check   the timer: finish a pending update, look for a new release, and install it at night
+                         (updates = "auto" in config.toml; "notify" waits for the phone, "off" doesn't look)
+  tenfoot-update now     install the newest release now (the phone's "Update now")
+
+A release is update.json (its version, notes, and the tarball's address and SHA-256) plus update.json.sig, an Ed25519
+signature by the key tools/release.py holds. Nothing unsigned, and nothing older than what's installed, is installed.
+Installing runs the release's own install.sh and reboots. After the reboot, `check` makes sure the service (and the
+browser, if it was up before) answers; if not, or if the install broke off half way, it puts the previous release back,
+remembers the bad one so it isn't tried again, and reboots once more.
+
+Everything the TV and phone show comes from status.json here, readable by all, with nothing secret in it.
+"""
+import base64
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import tomllib
+import urllib.request
+from pathlib import Path
+
+FEED = "https://github.com/hbofz/tenfoot/releases/latest/download/"
+PUBLIC_KEY = "u/fJod+vqPrJLO/KISdFYyXPSj4sqcHOS0EaRu4zRSw="  # tools/release.py signs with its private half
+DIR = Path("/var/lib/tenfoot-update")
+CONFIG = Path("/home/tenfoot/.config/tenfoot/config.toml")
+AIRPLAY_UNIT = Path("/home/tenfoot/.config/systemd/user/tenfoot-airplay.service")
+NIGHT = range(3, 6)  # local hours an automatic update may reboot the TV
+HEALTH_WAIT = 300  # seconds, after the reboot, for the new release to answer
+MAX_TARBALL = 64 << 20
+VERSION_RE = re.compile(r"^\d{1,4}(\.\d{1,4}){1,2}$")
+
+
+def log(*args):
+    print("tenfoot-update:", *args, flush=True)
+
+
+def parse(v):
+    if not isinstance(v, str) or not VERSION_RE.match(v):
+        raise ValueError(f"bad version {v!r}")
+    return tuple(int(x) for x in v.split("."))
+
+
+def newer(a, b):
+    """Is version a newer than b? (b None: nothing recorded, so anything is.)"""
+    return b is None or parse(a) > parse(b)
+
+
+def installed():
+    try:
+        return (DIR / "version").read_text().strip()
+    except FileNotFoundError:
+        return None
+
+
+def mode():
+    """updates = "auto" | "notify" | "off" in the TV's config.toml. Anything unreadable counts as auto: a typo there
+    shouldn't stop security updates."""
+    try:
+        m = tomllib.loads(CONFIG.read_text()).get("updates", "auto") if CONFIG.is_file() else "auto"
+    except (OSError, ValueError):
+        m = "auto"
+    return m if m in ("auto", "notify", "off") else "auto"
+
+
+def load():
+    try:
+        st = json.loads((DIR / "status.json").read_text())
+    except (FileNotFoundError, ValueError):
+        st = {}
+    st.setdefault("bad", [])
+    st.setdefault("state", "idle")
+    return st
+
+
+def save(st):
+    st["version"], st["mode"] = installed(), mode()
+    tmp = DIR / "status.json.tmp"
+    tmp.write_text(json.dumps(st, indent=1))
+    tmp.chmod(0o644)
+    os.replace(tmp, DIR / "status.json")
+
+
+def fetch(url, limit=1 << 20):
+    with urllib.request.urlopen(url, timeout=30) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"{url}: too big")
+    return data
+
+
+def verify(data, sig, key=None):
+    """The release manifest, if the signature over it is good; raises otherwise."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey  # only here: tests run without it
+    Ed25519PublicKey.from_public_bytes(base64.b64decode(key or PUBLIC_KEY)).verify(sig, data)
+    m = json.loads(data)
+    parse(m["version"])
+    if not str(m.get("url")).startswith("https://" if FEED.startswith("https://") else "http://"):
+        raise ValueError("manifest url must be https")
+    if not re.fullmatch(r"[0-9a-f]{64}", m.get("sha256", "")):
+        raise ValueError("manifest sha256 missing")
+    return m
+
+
+def latest():
+    """The newest signed release on the feed."""
+    return verify(fetch(FEED + "update.json"), fetch(FEED + "update.json.sig", 1024))
+
+
+def answers(url):
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def healthy(browser_was_up):
+    """Wait (up to HEALTH_WAIT) for the new release to work: its service's local API answers (only that service listens
+    there), and so does the browser if it did before the update (a TV unplugged at 4 am has no browser, and that isn't
+    the release's fault)."""
+    end = time.monotonic() + HEALTH_WAIT
+    while True:
+        ok = answers("http://127.0.0.1:8766/setup") and (not browser_was_up or answers("http://127.0.0.1:9222/json/version"))
+        if ok or time.monotonic() > end:
+            return ok
+        time.sleep(10)
+
+
+def run_install(src):
+    """A release's own install.sh, the way an admin runs it, keeping AirPlay if it's installed."""
+    args = [str(src / "install.sh")] + (["--airplay"] if AIRPLAY_UNIT.exists() else [])
+    subprocess.run(args, cwd=src, check=True, timeout=3600, stdin=subprocess.DEVNULL)
+
+
+def reboot():
+    log("rebooting")
+    subprocess.run(["systemctl", "reboot"])
+
+
+def unpack(m):
+    """Download the release, check it against the signed SHA-256, and unpack it (root's own copy) into releases/."""
+    rel = DIR / "releases" / m["version"]
+    part = DIR / "download.part"
+    h, n = hashlib.sha256(), 0
+    with urllib.request.urlopen(m["url"], timeout=60) as r, open(part, "wb") as f:
+        while chunk := r.read(1 << 16):
+            n += len(chunk)
+            if n > MAX_TARBALL:
+                raise ValueError("release too big")
+            h.update(chunk)
+            f.write(chunk)
+    if h.hexdigest() != m["sha256"]:
+        part.unlink()
+        raise ValueError("download doesn't match the signed checksum")
+    tmp = rel.with_name(rel.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    with tarfile.open(part) as t:
+        t.extractall(tmp, filter="data")  # no absolute paths, no "..", no links out, no setuid
+    part.unlink()
+    if (tmp / "VERSION").read_text().strip() != m["version"]:
+        raise ValueError("release's VERSION doesn't match its manifest")
+    shutil.rmtree(rel, ignore_errors=True)
+    tmp.rename(rel)
+    return rel
+
+
+def install(st, m):
+    v = m["version"]
+    log(f"installing {v} over {installed()}")
+    browser_up = answers("http://127.0.0.1:9222/json/version")
+    st.update(state="downloading", error=None)
+    save(st)
+    try:
+        rel = unpack(m)
+    except Exception as ex:
+        st.update(state="idle", error=f"Couldn't download {v}: {ex}", error_at=time.time())
+        save(st)
+        raise
+    st.update(state="installing", pending={"version": v, "previous": installed(), "browser": browser_up, "phase": "installing"})
+    save(st)
+    try:
+        run_install(rel)
+    except Exception as ex:
+        return rollback(st, f"its install failed ({ex})")
+    st["pending"]["phase"] = "verifying"
+    save(st)
+    reboot()
+
+
+def rollback(st, why):
+    p = st.pop("pending")
+    log(f"{p['version']} {why}; going back to {p['previous']}")
+    if p["version"] not in st["bad"]:
+        st["bad"].append(p["version"])
+    st.update(state="idle", available=None, error=f"Couldn't update to {p['version']}: {why}. Went back to {p['previous']}.",
+              error_at=time.time())
+    prev = DIR / "releases" / str(p["previous"])
+    if not (prev / "install.sh").exists():
+        st["error"] = f"Couldn't update to {p['version']}: {why}, and there's no earlier release to go back to."
+        save(st)
+        return
+    save(st)  # first: if putting the old one back breaks off too, the next boot doesn't try again
+    try:
+        run_install(prev)
+    except Exception as ex:
+        log("putting the previous release back failed:", ex)
+    prune()
+    save(st)
+    reboot()
+
+
+def prune():
+    """Keep only the installed release, to go back to next time."""
+    for old in (DIR / "releases").iterdir():
+        if old.name != installed():
+            shutil.rmtree(old, ignore_errors=True)
+
+
+def finish(st):
+    """After an update's reboot: keep it if it works, else roll back."""
+    p = st["pending"]
+    if p["phase"] == "installing":
+        return rollback(st, "its install broke off (power cut?)")
+    if not healthy(p["browser"]):
+        return rollback(st, "it didn't start properly")
+    log(f"{p['version']} is working")
+    del st["pending"]
+    st.update(state="idle", available=None, error=None)
+    prune()
+    save(st)
+
+
+def look(st):
+    """The newest release we'd install, recorded for the TV and phone to show; None if there's nothing new."""
+    try:
+        m = latest()
+    except Exception as ex:
+        log("couldn't check for updates:", ex)
+        st["check_error"] = str(ex)
+        save(st)
+        return None
+    st["checked"], st["check_error"] = time.time(), None
+    new = newer(m["version"], installed()) and m["version"] not in st["bad"]
+    st["available"] = {"version": m["version"], "notes": str(m.get("notes", ""))[:2000]} if new else None
+    save(st)
+    return m if new else None
+
+
+def main(cmd):
+    DIR.mkdir(parents=True, exist_ok=True)
+    with open(DIR / "lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return log("already running")
+        st = load()
+        if st.get("pending"):
+            return finish(st)
+        if cmd == "check":
+            if mode() == "off":
+                st["available"] = None
+                return save(st)
+            m = look(st)
+            if m and mode() == "auto" and time.localtime().tm_hour in NIGHT:
+                install(st, m)
+        elif cmd == "now":
+            m = look(st)
+            if m:
+                install(st, m)
+        else:
+            sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else "")

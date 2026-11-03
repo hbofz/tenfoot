@@ -1,0 +1,8 @@
+[Unit]
+Description=Tenfoot: finish an update, look for a new one, install it at night
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tenfoot-update check
