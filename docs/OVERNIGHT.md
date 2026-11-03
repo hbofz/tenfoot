@@ -9,9 +9,9 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 1 | Timezone and clock (the update window was in UTC) | done |
 | 2 | Whole-box watchdog and memory guard | done |
 | 3 | Health warnings: undervoltage, heat, disk, no internet | done |
-| 4 | Offline and error screens | in progress |
+| 4 | Offline and error screens | done |
 | 5 | YouTube ad blocking | done (a real pre-roll not seen yet) |
-| 6 | OS security updates (Widevine included) | |
+| 6 | OS security updates (Widevine included) | in progress |
 | 7 | Phone Settings page | |
 | 8 | Fewer SD card writes, power-cut survival | |
 | 9 | Idle handling inside apps (screensaver, TV standby) | |
@@ -59,3 +59,10 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - **Please check signed in:** the guest session never got a pre-roll ad, so I couldn't watch one being removed. Play a few videos signed in and see if any ad shows.
 - Review: GREEN first time (optional test gaps filled in).
 - Note: YouTube's guest mode asks "who's watching" on every fresh load of the TV app.
+
+### 4. Offline and error screens: done
+- When a site can't load (no internet, a name that doesn't exist, a host that refuses), the TV shows its own page instead of Chromium's, which a remote can't work: what's wrong in plain words, and Try again / Go back / Home, driven by the arrows and OK. It keeps retrying by itself (5 s, 10 s, ... up to a minute, one try at a time) and loads the site once it answers.
+- It's served at the site's own address, so the remote's Back works normally.
+- On the test Pi: a non-existent domain showed it with Try again focused; real remote presses moved between the buttons, went Home, and went Back; a site blocked then unblocked came back by itself within 5 s.
+- Not covered: a dead server whose connection times out, and certificate errors, still get Chromium's page (Chromium lumps those together; noted in the code).
+- Review: RED three times (a swallowed Back key that I found on the Pi myself; overlapping retries; a reload loop that could keep a slow site from ever loading), fixed, then GREEN.

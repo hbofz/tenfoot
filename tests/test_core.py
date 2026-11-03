@@ -1,4 +1,5 @@
 """python3 -m unittest discover tests : the parts with no TV or browser to hand."""
+import base64
 import json
 import os
 import socket
@@ -969,6 +970,53 @@ class Watcher(unittest.TestCase):
         self.pause("p", "https://www.disneyplus.com/")
         self.assertIn(("Emulation.setUserAgentOverride", {"userAgent": ""}, "p"), self.sent)
         self.assertIn(("Network.setBlockedURLs", {"urlPatterns": sites.SITE_BLOCK["disneyplus.com"]}, "p"), self.sent)
+
+    def ended(self, sid, url, reason=None, frame=None):
+        self.sent.clear()
+        params = {"requestId": "r2", "frameId": frame or sid + "-t", "request": {"url": url, "headers": {}}}
+        params.update({"responseErrorReason": reason} if reason else {"responseStatusCode": 200})
+        self.w.handle({"method": "Fetch.requestPaused", "sessionId": sid, "params": params})
+
+    def test_a_page_that_cant_load_gets_the_tvs_own(self):
+        self.attach("p", "about:blank")
+        self.ended("p", "https://nope.invalid/x", "NameNotResolved")
+        (m, p, s), = self.sent
+        self.assertEqual((m, p["responseCode"], s), ("Fetch.fulfillRequest", 200, "p"))
+        page = base64.b64decode(p["body"]).decode()
+        self.assertIn("Can't find nope.invalid", page)
+        self.assertNotIn("__TITLE__", page)
+
+    def test_other_ends_pass(self):
+        self.attach("p", "about:blank")
+        for reason, frame in ((None, None), ("Aborted", None), ("Failed", None), ("BlockedByClient", None), ("TimedOut", "an-iframe")):
+            # (None: a normal end, a redirect included)
+            self.ended("p", "https://example.com/", reason, frame)
+            self.assertEqual(self.sent, [("Fetch.continueRequest", {"requestId": "r2"}, "p")], reason)
+        self.assertEqual(self.opened, [])  # the end of a load isn't another app opening
+
+    def test_offline_page_escapes_the_address(self):
+        page = base64.b64decode(watcher.offline_page("<b>x</b>", "TimedOut")).decode()  # no hostname: the whole address
+        self.assertIn("&lt;b&gt;x&lt;/b&gt; isn't answering", page)
+        self.assertNotIn("<b>x", page)
+
+    def test_loads_are_watched_at_both_ends(self):
+        self.attach("p", "about:blank")
+        patterns = next(p for m, p, _ in self.sent if m == "Fetch.enable")["patterns"]
+        self.assertIn({"resourceType": "Document", "requestStage": "Response"}, patterns)
+
+    def test_a_failed_form_keeps_the_browsers_page(self):
+        self.attach("p", "about:blank")
+        self.sent.clear()
+        self.w.handle({"method": "Fetch.requestPaused", "sessionId": "p", "params": {
+            "requestId": "r3", "frameId": "p-t", "responseErrorReason": "TimedOut",
+            "request": {"url": "https://example.com/login", "method": "POST", "headers": {}}}})
+        self.assertEqual(self.methods(), ["Fetch.continueRequest"])
+
+    def test_offline_pages_way_home(self):
+        self.attach("p", "about:blank")
+        self.pause("p", watcher.HOME_URL)
+        self.assertEqual(self.methods(), ["Fetch.failRequest", "Page.navigate"])
+        self.assertEqual(self.sent[1][1], {"url": apps.page_url("home.html")})
 
     def test_frames_pass_untouched(self):
         self.attach("p", "about:blank")

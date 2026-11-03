@@ -1,5 +1,7 @@
 """Watches every tab over DevTools. As each page starts loading it sets that site's identity and
 blocking, injects the TV layer, closes ad popups and pauses Spotify so two things never play at once."""
+import base64
+import html
 import itertools
 import json
 import threading
@@ -8,15 +10,37 @@ import urllib.parse
 
 import websocket
 
-from .apps import app_of
+from .apps import app_of, page_url
 from .browser import on_screen
-from .config import INJECT
+from .config import INJECT, WEB_HOME
 from .sites import WATCHING, identity, rules_for, wants_tv, wants_windows
 
 # keyboard before sites: while the keyboard is up it takes the remote's keys first. Each in its own
 # try: one that a page breaks (a site that bans innerHTML) leaves the rest working.
 SCRIPTS = ("youtube.js", "spotify-web.js", "keyboard.js", "sites.js", "shahid.js", "pointer.js")
 NETWORK_PARAMS = {"maxTotalBufferSize": 0, "maxResourceBufferSize": 0}  # keep no copies of responses for DevTools
+# A page that couldn't load, by why (Fetch's ErrorReason), gets web/home/offline.html instead of the browser's own error
+# page, which a remote can't work. Not the rest: Aborted is a load something else replaced, Blocked* is our own
+# blocking, and Failed lumps together everything without a reason of its own: certificate errors (a hotel's Wi-Fi login
+# page, which the browser explains better), but also a dead host's connection timing out and protocol errors.
+# ponytail: those still get the browser's page; telling them apart needs Network.loadingFailed's errorText.
+OFFLINE = {
+    "InternetDisconnected": ("No internet connection", "Check that your Wi-Fi works. Tenfoot keeps trying by itself."),
+    "AddressUnreachable": ("No internet connection", "Check that your Wi-Fi works. Tenfoot keeps trying by itself."),
+    "NameNotResolved": ("Can't find {host}", "Check the address. If it's right, the internet may be down: Tenfoot keeps trying by itself."),
+}
+for _r in ("TimedOut", "ConnectionRefused", "ConnectionReset", "ConnectionClosed", "ConnectionFailed", "ConnectionAborted"):
+    OFFLINE[_r] = ("{host} isn't answering", "It may be down for a moment. Tenfoot keeps trying by itself.")
+HOME_URL = "https://home.tenfoot.invalid/"  # a page can't open the TV's file:// home screen itself: it goes here instead
+
+
+def offline_page(url, reason):
+    """offline.html for url, which didn't load for reason (one of OFFLINE), as a fulfilled response's body."""
+    host = urllib.parse.urlsplit(url).hostname or url
+    title, detail = (t.format(host=host) for t in OFFLINE[reason])
+    page = (WEB_HOME / "offline.html").read_text()
+    page = page.replace("__TITLE__", html.escape(title, quote=False)).replace("__DETAIL__", html.escape(detail, quote=False))
+    return base64.b64encode(page.encode()).decode()
 
 
 def injected_script(jellyfin_url=""):
@@ -102,7 +126,9 @@ class Watcher:
             self.pages[sid] = target["targetId"]
             if on_screen(target):
                 self.urls[sid] = target["url"]
-            self.send("Fetch.enable", {"patterns": [{"resourceType": "Document"}]}, sid)
+            # Page loads, as they start (for each site's identity) and as they end (a load that failed: offline_page)
+            self.send("Fetch.enable", {"patterns": [{"resourceType": "Document"},
+                                                    {"resourceType": "Document", "requestStage": "Response"}]}, sid)
             self.send("Page.enable", None, sid)
             # A site's service worker can answer page loads without the network, and then the Fetch
             # hook above never sees them: one visit to desktop youtube.com made every later
@@ -119,10 +145,22 @@ class Watcher:
         self.send("Runtime.runIfWaitingForDebugger", None, sid)
 
     def request_paused(self, params, session):
-        request = params["request"]
-        if params.get("frameId") != self.pages.get(session):  # frames keep the page's identity
-            return self.send("Fetch.continueRequest", {"requestId": params["requestId"]}, session)
+        request, rid = params["request"], params["requestId"]
+        main = params.get("frameId") == self.pages.get(session)
+        if "responseErrorReason" in params or "responseStatusCode" in params:  # the load's end
+            reason = params.get("responseErrorReason")
+            if main and reason in OFFLINE and request.get("method", "GET") == "GET":  # a form's: no "resubmit?" on retry
+                return self.send("Fetch.fulfillRequest", {
+                    "requestId": rid, "responseCode": 200, "body": offline_page(request["url"], reason),
+                    "responseHeaders": [{"name": "Content-Type", "value": "text/html; charset=utf-8"},
+                                        {"name": "Cache-Control", "value": "no-store"}]}, session)
+            return self.send("Fetch.continueRequest", {"requestId": rid}, session)
+        if not main:  # frames keep the page's identity
+            return self.send("Fetch.continueRequest", {"requestId": rid}, session)
         url = request["url"]
+        if url == HOME_URL:  # offline.html's way home
+            self.send("Fetch.failRequest", {"requestId": rid, "errorReason": "Aborted"}, session)
+            return self.send("Page.navigate", {"url": page_url("home.html")}, session)
         # Opening a web app pauses Spotify. The home and Spotify screens are file:// and never pass through here.
         if url.startswith("http"):
             threading.Thread(target=self.on_app_opened, daemon=True).start()
@@ -136,7 +174,7 @@ class Watcher:
         headers.append({"name": "User-Agent", "value": ua})
         if windows:
             headers.append({"name": "Sec-CH-UA-Platform", "value": '"Windows"'})
-        self.send("Fetch.continueRequest", {"requestId": params["requestId"], "headers": headers}, session)
+        self.send("Fetch.continueRequest", {"requestId": rid, "headers": headers}, session)
 
 
 def run(browser, script, jellyfin_url="", on_app_opened=lambda: None):

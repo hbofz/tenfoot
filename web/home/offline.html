@@ -1,0 +1,64 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<!-- Shown in place of the browser's own error page when a site doesn't load (tenfoot/watcher.py fills in the words and
+     answers the failed request with this page, at the site's own address: so Back is the browser's, and trying again
+     is a reload). It can't load anything of the TV's own (it runs as that website), so everything is inline. -->
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; color: #fff; font: 500 1.7vw/1.45 system-ui, "DejaVu Sans", sans-serif;
+         background: radial-gradient(90vw 90vh at 30% 20%, #26324a, #0b0e16 70%); }
+  main { max-width: 60vw; }
+  h1 { font: 700 3.6vw/1.1 system-ui, "DejaVu Sans", sans-serif; letter-spacing: -.02em; margin: 0 0 2vh; }
+  p { margin: 0 0 4vh; color: rgb(235 235 245 / .7); }
+  button { font: 600 1.6vw system-ui, "DejaVu Sans", sans-serif; color: #fff; background: rgb(255 255 255 / .12); border: 0;
+           border-radius: 1.4vw; padding: 1.4vh 2.4vw; margin-right: 1.2vw; outline: none; transition: transform .2s, background .2s; }
+  button:focus { background: #fff; color: #0b0e16; transform: scale(1.06); }
+  #again { color: rgb(235 235 245 / .55); font-size: 1.2vw; margin-top: 3vh; min-height: 1.5em; }
+</style>
+<main>
+  <h1>__TITLE__</h1>
+  <p>__DETAIL__</p>
+  <button id="retry">Try again</button><button id="back">Go back</button><button id="home">Home</button>
+  <div id="again"></div>
+</main>
+<script>
+window.tenfootOwnKeys = true;  // inject/sites.js leaves this page's keys to it
+const $ = (id) => document.getElementById(id);
+const buttons = [$("retry"), $("back"), $("home")];
+buttons[0].focus();
+$("retry").onclick = () => location.reload();
+$("back").onclick = () => history.back();
+$("home").onclick = () => (location.href = "https://home.tenfoot.invalid/");  // tenfoot/watcher.py HOME_URL
+addEventListener("keydown", (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;  // Alt+Left is the remote's Back: the browser's
+  const i = buttons.indexOf(document.activeElement);
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") buttons[(Math.max(i, 0) + (e.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length].focus();
+  else if (e.key === "Enter") (buttons[i] || buttons[0]).click();
+  else if (e.key === "Escape") history.back();  // the remote's Back on YouTube's TV app
+  else return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+// Try again by itself, waiting longer each time (5 s, 10 s, ... a minute): only reload once the site answers, so this
+// page doesn't flash while it's still down.
+let wait = 5, left = wait, probing = false;
+async function tick() {
+  if (probing) return;  // one try at a time: a slow failure takes up to 8 s
+  if (--left > 0) return ($("again").textContent = `Trying again in ${left} s`);
+  $("again").textContent = "Trying again…";
+  probing = true;
+  try {
+    // HEAD: any answer at all (even an error status) means the site is back; no page body fetched twice
+    await fetch(location.href, { method: "HEAD", mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(8000) });
+    location.reload();  // then the usual wait before trying again: a slow site needs that long to load, and every new
+  } catch {             // reload would start its load over (if this one never lands, the next try comes after it)
+  } finally {
+    probing = false;
+  }
+  wait = Math.min(wait * 2, 60);
+  left = wait;
+}
+setInterval(tick, 1000);
+addEventListener("online", () => { left = 1; });
+</script>

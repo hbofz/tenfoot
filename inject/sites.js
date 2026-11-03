@@ -635,7 +635,8 @@
     e.stopImmediatePropagation();
   }, true);
   addEventListener("keydown", (e) => {
-    if (!e.isTrusted) return;  // a site's own, or the Enter the keyboard's Done sends
+    if (!e.isTrusted || window.tenfootOwnKeys) return;  // a site's own, or the Enter the keyboard's Done sends; or
+    // the TV's own page for a site that didn't load (web/home/offline.html), which does its own keys
     presses++;
     pressedAt = performance.now();
     if (!map && !mapping) remap();
