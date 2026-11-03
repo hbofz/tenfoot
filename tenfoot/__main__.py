@@ -9,7 +9,7 @@ import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from . import browser, cec, clock, config, health, kiosk, links, server, setup, spotify, watcher
+from . import browser, cec, clock, config, health, idle, kiosk, links, server, setup, spotify, watcher
 from .apps import load_apps
 from .settings import render
 from .controls import Controls
@@ -88,6 +88,7 @@ def serve(settings):
         workers.append((music.watch_logins,))
     workers.append((alive_loop,))
     workers.append((health.loop,))
+    workers.append((idle.loop, cdp, tv, music, settings))
     for loop, *args in workers:
         threading.Thread(target=forever, args=(loop, *args), daemon=True).start()
     local = ThreadingHTTPServer(("127.0.0.1", config.LOCAL_PORT), server.Local)
