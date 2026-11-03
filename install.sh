@@ -23,7 +23,7 @@ done
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade curl chromium cage wlr-randr libwidevinecdm0 \
   pipewire-pulse wireplumber pulseaudio-utils v4l-utils coreutils procps network-manager dnsmasq-base polkitd \
-  python3-evdev python3-websocket python3-qrcode python3-cryptography python3-numpy python3-pil earlyoom >/dev/null
+  python3-evdev python3-websocket python3-qrcode python3-cryptography python3-numpy python3-pil earlyoom dpkg-repack >/dev/null
 [ "$AIRPLAY" = 0 ] || {
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade --no-install-recommends uxplay gstreamer1.0-plugins-bad avahi-daemon >/dev/null
   if [ "$IMAGE" = 1 ]; then sudo systemctl enable avahi-daemon; else sudo systemctl enable --now avahi-daemon; fi
@@ -83,6 +83,12 @@ sudo systemctl enable earlyoom 2>/dev/null
 sudo mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n' | sudo tee /etc/systemd/journald.conf.d/tenfoot.conf >/dev/null
 [ "$IMAGE" = 1 ] || sudo systemctl restart systemd-journald
+
+# The 1080p60 browser and compositor (patches/) were built against exactly these: held, so no upgrade (the updater's
+# weekly system updates, or an admin's apt full-upgrade) swaps them underneath. Unhold with apt-mark unhold, rebuild.
+HOLD=$(dpkg-query -W -f '${Package}\n' cage libwlroots-0.20 libgbm1 libegl-mesa0 mesa-libgallium libgl1-mesa-dri libglx-mesa0 \
+  libdrm2 libdrm-common libliftoff0 2>/dev/null || true)
+[ -z "$HOLD" ] || sudo apt-mark hold $HOLD >/dev/null
 
 # Updates (system/tenfoot-update): root's own copy of the updater and its timer, and a copy of this release to go back
 # to if the next one doesn't work. Run by the updater itself, this already is that copy.

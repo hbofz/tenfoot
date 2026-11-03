@@ -9,6 +9,7 @@ import os
 import tarfile
 import tempfile
 import threading
+import time
 import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -197,6 +198,116 @@ class Updater(unittest.TestCase):
         with mock.patch.object(up, "NIGHT", range(0)):
             up.main("check")
         self.assertEqual(self.status()["state"], "idle")
+
+    SIM = """Inst libexpat1 [2.8.3-1~deb13u1] (2.9.0-1~deb13u1 Debian-Security:13/stable-security [arm64])
+Inst tzdata [2026c-0+deb13u1] (2026f-0+deb13u1 Debian:13-updates/stable-updates [all])
+Inst libcamera0.7 [0.7.2+rpt20260817-1] (0.7.2+rpt20261009-1 Raspberry Pi Foundation:stable [arm64]) []
+Inst ffmpeg [7:7.1.1-1+rpt3] (7:7.1.2-0+deb13u1 Debian-Security:13/stable-security [arm64])
+Inst libwidevinecdm0 [4.10.2662.3+1] (4.10.2830.0+1 Raspberry Pi Foundation:stable [arm64])
+Conf libexpat1 (2.9.0-1~deb13u1 Debian-Security:13/stable-security [arm64])
+"""
+
+    def test_os_plan(self):
+        self.assertEqual(up.os_plan(self.SIM, []), [("libexpat1", "2.9.0-1~deb13u1"), ("tzdata", "2026f-0+deb13u1"),
+                                                    ("libwidevinecdm0", "4.10.2830.0+1")])  # not Raspberry Pi's, nor their fork of ffmpeg
+        self.assertEqual(up.os_plan(self.SIM, ["tzdata=2026f-0+deb13u1"])[1][0], "libwidevinecdm0")  # broke the box once: never again
+
+    def os_box(self, extra="", fail=lambda args: False, changed=lambda n: True):
+        """apt and dpkg, faked: returns the calls made. fail(args) -> that command fails; changed(n) -> whether the
+        installed versions differ the n-th time they're asked for."""
+        calls, asked = [], [0]
+
+        def run(args, **kw):
+            calls.append(args)
+            out = ""
+            if args[:1] == ["apt-get"] and "-s" in args:
+                out = self.SIM if "upgrade" in args else "\n".join(f"Inst {n} [1] (2 Debian:13/stable [all])" for n in args[-3:]) + extra
+            if args[:1] == ["dpkg-repack"]:
+                for n in args[1:]:
+                    (up.OS_PREV / f"{n}_old.deb").write_text("")
+            if args[:1] == ["dpkg-query"]:
+                asked[0] += 1
+                out = "libexpat1=" + ("2" if asked[0] > 1 and changed(asked[0]) else "1")
+            return mock.Mock(returncode=1 if fail(args) else 0, stdout=out, stderr="E: oops")
+        p = mock.patch.object(up.subprocess, "run", run)
+        p.start()
+        self.addCleanup(p.stop)
+        mock.patch.object(up, "OS_PREV", self.dir / "os-prev").start()
+        return calls
+
+    def test_os_update_keep(self):
+        calls = self.os_box()
+        up.main("os")
+        st = self.status()
+        self.assertEqual((st["pending"]["kind"], st["pending"]["phase"], len(self.reboots)), ("os", "verifying", 1))
+        install = next(c for c in calls if c[:1] == ["apt-get"] and "install" in c and "-s" not in c and "-d" not in c)
+        self.assertEqual(install[-3:], ["libexpat1", "tzdata", "libwidevinecdm0"])
+        self.assertIn("Dpkg::Options::=--force-confold", install)  # never ask about config files: nobody's there
+        self.assertIn("--no-remove", install)
+        self.assertTrue((self.dir / "os-prev" / "tzdata_old.deb").exists())  # saved before
+        up.main("check")  # after the reboot: working
+        st = self.status()
+        self.assertEqual((st.get("pending"), st["state"]), (None, "idle"))
+        self.assertFalse((self.dir / "os-prev").exists())
+
+    def test_os_update_rolls_back(self):
+        calls = self.os_box()
+        up.main("os")
+        self.healthy = False
+        up.main("check")
+        st = self.status()
+        self.assertEqual((st.get("pending"), st["os_failed"]["libexpat1=2.9.0-1~deb13u1"]), (None, 1))
+        self.assertIn("previous versions are back", st["error"])
+        self.assertEqual(calls[-1][:2], ["dpkg", "-i"])
+        self.assertEqual(len(self.reboots), 2)
+        self.assertEqual(len(up.os_plan(self.SIM, [k for k, n in st["os_failed"].items() if n >= 2])), 3)  # once: tried again
+        up.main("os")
+        self.healthy = True
+        self.healthy = False
+        up.main("check")
+        self.assertEqual(up.os_plan(self.SIM, [k for k, n in self.status()["os_failed"].items() if n >= 2]), [])  # twice: not again
+
+    def test_no_network_at_4am_is_not_a_bad_update(self):
+        for fail in (lambda a: "-d" in a, lambda a: a[:1] == ["apt-get"] and "install" in a and "-s" not in a and "-d" not in a):
+            self.reboots.clear()
+            (self.dir / "status.json").unlink(missing_ok=True)
+            self.os_box(fail=fail, changed=lambda n: False)
+            up.main("os")
+            st = self.status()
+            self.assertEqual((st.get("pending"), st.get("os_failed"), self.reboots), (None, None, []))
+
+    def test_a_half_done_install_rolls_back(self):
+        self.os_box(fail=lambda a: a[:1] == ["apt-get"] and "install" in a and "-s" not in a and "-d" not in a)
+        up.main("os")
+        self.assertIn("didn't install cleanly", self.status()["error"])
+        self.assertEqual(len(self.reboots), 1)
+
+    def test_a_rollback_cut_short_resumes(self):
+        calls = self.os_box()
+        up.main("os")
+        st = self.status()
+        st["pending"].update(phase="rolling-back", why="left the TV not starting properly")  # the power went mid dpkg -i
+        (self.dir / "status.json").write_text(json.dumps(st))
+        up.main("check")
+        self.assertEqual((self.status().get("pending"), calls[-1][:2]), (None, ["dpkg", "-i"]))
+
+    def test_os_update_waits_if_more_would_change(self):
+        for extra in ("\nInst libwlroots-0.20 [1] (2 Raspberry Pi Foundation:stable [arm64])", "\nRemv ntfs-3g [1]"):
+            calls = self.os_box(extra=extra)
+            up.main("os")
+            self.assertEqual((self.status().get("pending"), self.reboots), (None, []))
+            self.assertFalse(any(c[:1] == ["dpkg-repack"] for c in calls))
+
+    def test_os_updates_only_on_their_night(self):
+        self.os_box()
+        days = {}
+        for wday in range(7):
+            with mock.patch.object(up.time, "localtime", lambda *a, w=wday: time.struct_time((2026, 11, 1, 4, 0, 0, w, 305, 0))):
+                (self.dir / "status.json").unlink(missing_ok=True)
+                self.reboots.clear()
+                up.main("check")
+                days[wday] = len(self.reboots)
+        self.assertEqual(days, {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 1})
 
     def test_modes(self):
         self.release("0.2.0")

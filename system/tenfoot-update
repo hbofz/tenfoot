@@ -5,6 +5,7 @@ files: a hacked browser runs as that user and must not be able to change what ro
   tenfoot-update check   the timer: finish a pending update, look for a new release, and install it at night
                          (updates = "auto" in config.toml; "notify" waits for the phone, "off" doesn't look)
   tenfoot-update now     install the newest release now (the phone's "Update now")
+  tenfoot-update os      the system's own updates, now (a check does them once a week, on Sunday night, in auto mode)
   tenfoot-update reboot-stuck
                          the kiosk watchdog's last resort (tenfoot/kiosk.py): reboot, unless it's been up less than an
                          hour (so it can never loop), an update is under way, or someone is logged in (an admin
@@ -17,6 +18,12 @@ browser, if it was up before) answers; if not, or if the install broke off half 
 remembers the bad one so it isn't tried again, and reboots once more.
 
 Everything the TV and phone show comes from status.json here, readable by all, with nothing secret in it.
+
+The system's own packages (Raspberry Pi OS installs none by itself): once a week, Debian's security and point-release
+updates of Debian's own packages, plus Widevine (a revoked one stops Netflix and the rest). Not Raspberry Pi's own
+builds of anything else: the 1080p60 browser and compositor depend on exactly the cage, wlroots and Mesa they were made
+against (install.sh also holds those). The packages being replaced are saved first (dpkg-repack): if the box doesn't
+come back healthy after the reboot, they go back, and those versions are never tried again.
 """
 import base64
 import fcntl
@@ -42,6 +49,10 @@ NIGHT = range(3, 6)  # local hours an automatic update may reboot the TV
 HEALTH_WAIT = 300  # seconds, after the reboot, for the new release to answer
 MAX_TARBALL = 64 << 20
 VERSION_RE = re.compile(r"^\d{1,4}(\.\d{1,4}){1,2}$")
+OS_DAY = 6  # Sunday (time.localtime().tm_wday): a release can come any night, the system's updates on this one
+OS_PREV = DIR / "os-prev"  # the packages an OS update replaced, to put back
+OS_TAKE = ("libwidevinecdm0",)  # the Raspberry Pi package worth taking as it comes
+INST = re.compile(r"^Inst (\S+) \[(\S+)\] \((\S+) (\S+)")  # `apt-get -s`: Inst pkg [old] (new Origin:suite [arch])
 
 
 def log(*args):
@@ -243,6 +254,8 @@ def prune():
 def finish(st):
     """After an update's reboot: keep it if it works, else roll back."""
     p = st["pending"]
+    if p.get("kind") == "os":
+        return os_finish(st)
     if p["phase"] == "installing":
         return rollback(st, "its install broke off (power cut?)")
     if not healthy(p["browser"]):
@@ -268,6 +281,127 @@ def look(st):
     st["available"] = {"version": m["version"], "notes": str(m.get("notes", ""))[:2000]} if new else None
     save(st)
     return m if new else None
+
+
+def apt(*args):
+    return subprocess.run(["apt-get", "-q", "-o", "Acquire::Languages=none", *args], capture_output=True, text=True,
+                          timeout=3600, env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}, stdin=subprocess.DEVNULL)
+
+
+def os_plan(simulated, bad):
+    """`apt-get -s upgrade` -> the (package, new version) pairs to take: Debian's updates of Debian's own packages (not
+    ones Raspberry Pi rebuilt, "rpt" in the version: a higher Debian version would quietly replace their fork), and
+    Widevine. Never a version that broke the box twice."""
+    take = []
+    for line in simulated.splitlines():
+        m = INST.match(line)
+        if not m:
+            continue
+        pkg, old, new, origin = m.groups()
+        if f"{pkg}={new}" not in bad and (pkg in OS_TAKE or origin.startswith("Debian") and "rpt" not in old):
+            take.append((pkg, new))
+    return take
+
+
+def versions(names):
+    out = subprocess.run(["dpkg-query", "-W", "-f", "${Package}=${Version}\n", *names], capture_output=True, text=True, timeout=60)
+    return set(out.stdout.split())
+
+
+def os_update(st):
+    """The system's own updates (see the top): saved, downloaded, installed, then a reboot and os_finish. Anything that
+    goes wrong before a package actually changes (no network at 4 am, a mirror mid-sync, a full disk) just waits for
+    next week."""
+    subprocess.run(["dpkg", "--configure", "-a"], capture_output=True, timeout=3600)  # after a power cut mid-install
+    if apt("update").returncode:
+        return log("os: couldn't fetch the package lists")
+    sim = apt("-s", "upgrade")
+    if sim.returncode:
+        st.update(error="System updates are stuck: the package manager needs a look (sudo apt-get -f install).", error_at=time.time())
+        save(st)
+        return log("os: apt-get -s upgrade failed:", sim.stderr.strip()[-300:])
+    if str(st.get("error", "")).startswith("System updates are stuck"):
+        st["error"] = None  # unstuck: whoever had a look fixed it
+    bad = [k for k, n in st.get("os_failed", {}).items() if n >= 2]
+    plan = os_plan(sim.stdout, bad)
+    st["os_checked"] = time.time()
+    if not plan:
+        save(st)
+        return log("os: nothing to update")
+    names = [p for p, _ in plan]
+    # Exactly these, or nothing: if one needs another package changed, added or removed (Raspberry Pi's, say), wait.
+    trial = apt("-s", "install", "--only-upgrade", "--no-remove", *names)
+    touched = {m.group(2) for m in map(re.compile(r"^(Inst|Remv) (\S+)").match, trial.stdout.splitlines()) if m}
+    if trial.returncode or touched - set(names):
+        save(st)
+        return log(f"os: not updating, it would also change {', '.join(sorted(touched - set(names))) or '(apt said no)'}")
+    if apt("install", "-d", "-y", "--only-upgrade", "--no-remove", *names).returncode:  # every download first: nothing changed yet
+        save(st)
+        return log("os: couldn't download the updates; next week")
+    shutil.rmtree(OS_PREV, ignore_errors=True)
+    OS_PREV.mkdir()
+    subprocess.run(["dpkg-repack", *names], cwd=OS_PREV, check=True, capture_output=True, timeout=3600)
+    before = versions(names)
+    st.update(state="installing", error=None, pending={"kind": "os", "version": installed(), "packages": [f"{p}={v}" for p, v in plan],
+                                                       "browser": answers("http://127.0.0.1:9222/json/version"), "phase": "installing"})
+    save(st)
+    log(f"os: updating {len(plan)} packages: {' '.join(names)}")
+    r = apt("install", "-y", "--only-upgrade", "--no-remove", "-o", "Dpkg::Options::=--force-confold", *names)
+    if r.returncode:
+        if versions(names) == before:  # failed before dpkg changed anything: no harm done, try again next week
+            del st["pending"]
+            st.update(state="idle")
+            save(st)
+            return log("os: the install stopped before changing anything:", r.stderr.strip()[-300:])
+        return os_rollback(st, "didn't install cleanly")
+    st["pending"]["phase"] = "verifying"
+    save(st)
+    reboot()
+
+
+def os_rollback(st, why):
+    """Put the saved packages back and reboot. Kept as pending (phase rolling-back) until done: a power cut part way, and
+    the next boot puts them back again."""
+    p = st["pending"]
+    if p["phase"] != "rolling-back":
+        log(f"os: the system update {why}; putting the old packages back")
+        failed = st.setdefault("os_failed", {})
+        for k in p["packages"]:  # a version that fails twice is never tried again (once could be bad luck)
+            failed[k] = failed.get(k, 0) + 1
+        p["phase"], p["why"] = "rolling-back", why
+        st.update(state="installing")
+        save(st)
+    ok = False
+    try:
+        subprocess.run(["dpkg", "--configure", "-a"], capture_output=True, timeout=3600, stdin=subprocess.DEVNULL)
+        old = sorted(str(f) for f in OS_PREV.glob("*.deb"))
+        ok = not old or subprocess.run(["dpkg", "-i", "--force-confdef", "--force-confold", *old], capture_output=True,
+                                       timeout=3600, stdin=subprocess.DEVNULL).returncode == 0
+    except (OSError, subprocess.SubprocessError) as ex:
+        log("os: putting the old packages back:", ex)
+    del st["pending"]
+    st.update(state="idle", error_at=time.time(), error=f"A system update {p['why']}. " + (
+        "The previous versions are back." if ok else "Putting the previous versions back didn't work: it needs a look."))
+    if not ok:
+        log("os: putting the old packages back failed")
+    save(st)
+    reboot()
+
+
+def os_finish(st):
+    p = st["pending"]
+    if p["phase"] == "installing":
+        return os_rollback(st, "broke off (power cut?)")
+    if p["phase"] == "rolling-back":
+        return os_rollback(st, p.get("why", "failed"))  # it was cut short: again
+    if not healthy(p["browser"]):
+        return os_rollback(st, "left the TV not starting properly")
+    log(f"os: {len(p['packages'])} packages updated and working")
+    del st["pending"]
+    st.update(state="idle", error=None)
+    shutil.rmtree(OS_PREV, ignore_errors=True)
+    apt("clean")
+    save(st)
 
 
 def others_logged_in():
@@ -313,12 +447,17 @@ def main(cmd):
                 st["available"] = None
                 return save(st)
             m = look(st)
-            if m and mode() == "auto" and synced() and time.localtime().tm_hour in NIGHT:
+            night = mode() == "auto" and synced() and time.localtime().tm_hour in NIGHT
+            if m and night:
                 install(st, m)
+            elif night and time.localtime().tm_wday == OS_DAY and time.time() - st.get("os_checked", 0) > 3 * 86400:
+                os_update(st)
         elif cmd == "now":
             m = look(st)
             if m:
                 install(st, m)
+        elif cmd == "os":
+            os_update(st)
         else:
             sys.exit(__doc__)
 
