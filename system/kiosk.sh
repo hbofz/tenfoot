@@ -9,7 +9,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 [ -f "$HOME/.config/tenfoot/kiosk.env" ] && . "$HOME/.config/tenfoot/kiosk.env"
 # TVs can advertise 4K: 4x the pixels at half the frames turns every animation choppy.
 OUT=$(wlr-randr 2>/dev/null | awk '/^[A-Z]/ { print $1; exit }')
-[ -n "$OUT" ] && wlr-randr --output "$OUT" --mode "$(cat "$ROOT/web/home/run/display-mode" 2>/dev/null || echo 1920x1080@60)" 2>/dev/null
+MODE=$(cd "$ROOT" && python3 -m tenfoot.display 2>/dev/null)  # the best the TV lists (tenfoot/display.py)
+[ -n "$OUT" ] && [ -n "$MODE" ] && wlr-randr --output "$OUT" --mode "$MODE" 2>/dev/null
 # Sound, once: the TV over HDMI at full volume, so the remote's volume is what you hear. Tried each start until a TV is there.
 AUDIO_DONE=$HOME/.config/tenfoot/audio-set
 if [ ! -e "$AUDIO_DONE" ]; then

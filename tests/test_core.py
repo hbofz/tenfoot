@@ -41,12 +41,11 @@ class Config(unittest.TestCase):
         s = config.load("/nonexistent/config.toml")
         self.assertEqual((s.remote_mode, s.listen_host, s.screen), ("lan", "0.0.0.0", (1920, 1080)))
 
-    def test_render_tells_the_kiosk_the_mode(self):
+    def test_render_writes_the_home_screens_data(self):
         from tenfoot.__main__ import render
         run = Path(tempfile.mkdtemp())
         with mock.patch.object(config, "RUN", run):
-            render(config.Settings(display_mode="1280x720@60"))
-        self.assertEqual((run / "display-mode").read_text(), "1280x720@60")
+            render(config.Settings())
         self.assertIn("window.APPS", (run / "config.js").read_text())
 
     def test_values(self):
@@ -1044,10 +1043,52 @@ class Kiosk(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertFalse(notify("WATCHDOG=1"))  # run by hand, not by systemd
 
-    def test_mode_check(self):
-        self.assertTrue(kiosk.current_mode_ok("    1920x1080 px, 60.000000 Hz (preferred, current)\n", "1920x1080@60"))
-        self.assertTrue(kiosk.current_mode_ok("    1920x1080 px, 60.000000 Hz (current)\n", "1920x1080@60"))
-        self.assertFalse(kiosk.current_mode_ok("    3840x2160 px, 30.000000 Hz (current)\n    1920x1080 px, 60.000000 Hz\n", "1920x1080@60"))
+    def test_display_modes(self):
+        from tenfoot import display
+        out = lambda *modes: "HDMI-A-1 \"TV\"\n  Modes:\n" + "".join(f"    {m}\n" for m in modes) + "  Position: 0,0\n"
+        k4 = out("3840x2160 px, 30.000000 Hz (preferred, current)", "1920x1080 px, 60.000000 Hz", "1920x1080 px, 59.939999 Hz",
+                 "1920x1080 px, 50.000000 Hz", "1280x720 px, 60.000000 Hz")
+        self.assertEqual(display.choose(k4), "1920x1080@60.000")  # not the 4K TV's 30 Hz favourite
+        self.assertEqual(display.current(k4), "3840x2160@30.000")
+        tv720 = out("1366x768 px, 60.000000 Hz (preferred)", "1280x720 px, 60.000000 Hz", "1024x768 px, 60.000000 Hz")
+        self.assertEqual(display.choose(tv720), "1366x768@60.000")  # no 1080p at all: its own
+        panel = out("1920x1080 px, 59.939999 Hz (preferred)", "1280x720 px, 59.939999 Hz")
+        self.assertEqual(display.choose(panel), "1920x1080@59.940")  # spelled so wlr-randr matches it
+        eu = out("1920x1080 px, 50.000000 Hz (preferred)", "1280x720 px, 50.000000 Hz")
+        self.assertEqual(display.choose(eu), "1920x1080@50.000")
+        slow = out("3840x2160 px, 30.000000 Hz (preferred)", "1920x1080 px, 30.000000 Hz", "1280x720 px, 60.000000 Hz")
+        self.assertEqual(display.choose(slow), "1920x1080@30.000")  # 1080p still beats 720p
+        self.assertEqual(display.choose(k4, "1280x720@60"), "1280x720@60.000")  # asked for, and listed
+        self.assertEqual(display.choose(panel, "1920x1080@60"), "1920x1080@59.940")  # 59.94 counts as 60
+        self.assertEqual(display.choose(eu, "1920x1080@60"), "1920x1080@50.000")  # not listed: the best there is
+        self.assertIsNone(display.choose(""))
+        two = k4 + "HDMI-A-2 \"Other\"\n  Modes:\n    1280x720 px, 60.000000 Hz (preferred)\n"
+        self.assertEqual(display.choose(two), "1920x1080@60.000")  # the first output only
+        self.assertEqual(config.Settings().screen, (1920, 1080))  # "auto": the pointer's space
+        both = out("1920x1080 px, 60.000000 Hz", "1920x1080 px, 59.939999 Hz")
+        self.assertEqual(display.choose(both, "1920x1080@59.94"), "1920x1080@59.940")  # the closest, not the first
+        self.assertEqual(display.choose(k4, "1280x720"), "1280x720@60.000")  # a size alone: its best refresh
+
+    def test_pin_display_only_switches_when_its_wrong(self):
+        sample = lambda current: ("HDMI-A-1 \"TV\"\n  Modes:\n"
+                                  f"    3840x2160 px, 30.000000 Hz (preferred{', current' if current == '4k' else ''})\n"
+                                  f"    1920x1080 px, 60.000000 Hz{' (current)' if current == 'hd' else ''}\n")
+        for current, switches in (("hd", []), ("4k", [["wlr-randr", "--output", "HDMI-A-1", "--mode", "1920x1080@60.000"]])):
+            calls = []
+
+            def run(args, **kw):
+                calls.append(args)
+                return mock.Mock(stdout=sample(current), returncode=0)
+            with mock.patch.object(kiosk.subprocess, "run", run):
+                kiosk.pin_display("auto")
+            self.assertEqual([c for c in calls if "--mode" in c], switches, current)
+
+    def test_bad_display_mode_stops_the_service(self):
+        for bad in ("1920x1080@60Hz", "1920x1080@", "big"):
+            d = Path(tempfile.mkdtemp())
+            (d / "config.toml").write_text(f'display_mode = "{bad}"\n')
+            with self.assertRaises(SystemExit):
+                config.load(d / "config.toml")
 
 
 class FakePlayer(BaseHTTPRequestHandler):

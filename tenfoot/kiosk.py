@@ -8,6 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import display
 from .config import CHROMIUM_PROFILE
 
 CHECK_EVERY, MISSES = 30, 3
@@ -17,19 +18,15 @@ STEPS = (("chromium", (MISSES - 1) * CHECK_EVERY), ("cage", 60), ("reboot", 180)
 last_beat = time.monotonic()  # each round of the watchdog: the service's own liveness check reads it
 
 
-def current_mode_ok(wlr_randr_output, mode):
-    """Is the screen on mode ('1920x1080@60')? wlr-randr marks it "(current)" or "(preferred, current)"."""
-    size, hz = mode.split("@")
-    return bool(re.search(rf"{size} px, {hz}\.0+ Hz \([^)]*current", wlr_randr_output))
-
-
-def pin_display(mode):
+def pin_display(want):
     """TVs advertise 4K, and after every HDMI replug (TV off and on, input switches) the compositor
-    picks it again: 4x the pixels at 30 Hz, and everything on screen turns choppy. Put it back."""
+    picks it again: 4x the pixels at 30 Hz, and everything on screen turns choppy. Put it back, to the
+    best mode the TV lists (tenfoot/display.py): want is display_mode, "auto" or one asked for."""
     env = dict(os.environ, WAYLAND_DISPLAY="wayland-0")  # the kiosk's cage on tty1
     out = subprocess.run(["wlr-randr"], capture_output=True, text=True, env=env, timeout=10).stdout
     name = re.search(r"^(\S+) ", out, re.M)
-    if name and not current_mode_ok(out, mode):
+    mode = display.choose(out, want)
+    if name and mode and display.current(out) != mode:
         if subprocess.run(["wlr-randr", "--output", name.group(1), "--mode", mode], env=env, timeout=10).returncode == 0:
             print(f"display: back to {mode}", flush=True)
 

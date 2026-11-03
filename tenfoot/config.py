@@ -1,5 +1,6 @@
 """Settings, read once from ~/.config/tenfoot/config.toml. Everything has a working default."""
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -27,7 +28,7 @@ class Settings:
     remote_mode: str = "lan"  # "lan", "tailscale" (behind Tailscale Serve or Funnel) or "url"
     remote_url: str = ""  # with "url": the address phones reach this box at, with no trailing slash
     remote_port: int = 8765
-    display_mode: str = "1920x1080@60"
+    display_mode: str = "auto"  # the best the TV lists (1080p at 60 if it can, tenfoot/display.py), or e.g. "1280x720@60"
     spotify: bool = True  # Spotify Connect, through go-librespot
     jellyfin_url: str = ""
     remote_devices: list[str] = field(default_factory=lambda: [r"vc4-hdmi-\d+"])  # input devices to grab as TV remotes
@@ -37,6 +38,9 @@ class Settings:
 
     @property
     def screen(self):
+        """The virtual pointer's space (the compositor scales it to whatever the mode is)."""
+        if self.display_mode == "auto":
+            return 1920, 1080
         w, h = self.display_mode.split("@")[0].split("x")
         return int(w), int(h)
 
@@ -59,6 +63,8 @@ def load(path=None):
     settings = Settings(**values)
     if settings.remote_mode not in ("lan", "tailscale", "url"):
         raise SystemExit(f"{path}: remote_mode must be lan, tailscale or url")
+    if not re.fullmatch(r"auto|\d+x\d+(@\d+(\.\d+)?)?", settings.display_mode):
+        raise SystemExit(f'{path}: display_mode is "auto" or like "1920x1080@60"')
     if not (settings.screensaver_minutes >= 0 and settings.standby_hours >= 0):
         raise SystemExit(f"{path}: screensaver_minutes and standby_hours can't be negative")
     if settings.updates not in ("auto", "notify", "off"):

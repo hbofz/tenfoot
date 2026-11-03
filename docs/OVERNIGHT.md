@@ -17,8 +17,8 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 9 | Idle handling inside apps (screensaver, TV standby) | done |
 | 10 | "Send logs" bundle | done |
 | 11 | Factory reset and sign-out | done |
-| 12 | Display adaptivity (720p and 4K TVs) | in progress |
-| 13 | Recently used apps first | |
+| 12 | Display adaptivity (720p and 4K TVs) | done |
+| 13 | Recently used apps first | decided against; a fix instead |
 
 Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per site, Bluetooth pairing, home screen design and icons, a smart plug for real power-cut tests.
 
@@ -109,3 +109,9 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - A reset cut short by a power cut finishes on the next start.
 - On the test Pi: sign-out through the phone cleared a 182 MB browser profile (Widevine kept, DRM still working); a reset (keeping Wi-Fi) changed the links and QR code and cleared the personal settings; the code showed on the home screen even when asked from a website; three wrong codes locked it.
 - Review: RED five times, all about guessing the code without seeing the TV (asking again for a fresh 3 tries; a website reading the code; a rename restarting the service to forget the count; a full disk not counting). Each closed, then GREEN.
+
+### 12. Any TV's display: done
+- The box used to insist on exactly "1920x1080 at 60 Hz". Many screens list 59.94 Hz instead (which the tool prints as 59.939999 and only matches when spelled exactly), 720p TVs have no 1080p at all, and some European TVs only do 50 Hz: on those it failed every 30 seconds, and a 4K TV without a 60 Hz 1080p stayed at choppy 4K 30 Hz.
+- Now `display_mode = "auto"` (the new default) picks from what the TV lists: 1080p at the best refresh up to 60, else the TV's own preferred mode, else the largest the Pi draws smoothly. An explicit mode is still honoured if the TV lists it.
+- On the test Pi's 4K TV: 31 modes listed, auto picks 1080p60; switched to 720p by hand, it was put back within 30 seconds; the kiosk starting fresh came up in 1080p60.
+- Review: GREEN (small fixes taken: a malformed setting is caught at load instead of leaving the TV asleep after every wake).

@@ -13,7 +13,7 @@ name = "Tenfoot"                 # what the TV, Spotify and AirPlay call this bo
 remote_mode = "lan"
 # remote_url = "https://tv.example.com"
 
-display_mode = "1920x1080@60"
+display_mode = "auto"            # the best the TV lists: 1080p at 60 Hz when it can; or e.g. "1280x720@60"
 spotify = true
 # jellyfin_url = "http://192.168.1.20:8096"   # adds a Jellyfin tile
 
