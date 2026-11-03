@@ -10,7 +10,7 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 2 | Whole-box watchdog and memory guard | done |
 | 3 | Health warnings: undervoltage, heat, disk, no internet | done |
 | 4 | Offline and error screens | in progress |
-| 5 | YouTube ad blocking | |
+| 5 | YouTube ad blocking | done (a real pre-roll not seen yet) |
 | 6 | OS security updates (Widevine included) | |
 | 7 | Phone Settings page | |
 | 8 | Fewer SD card writes, power-cut survival | |
@@ -37,7 +37,7 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - earlyoom kills a browser tab before memory runs out (tuned for the Pi's compressed zram swap, where "swap still free" means nothing). A kernel panic now reboots in 10 s. The TV user's service manager restarts if the kernel's own out-of-memory killer takes it (it did, in a test: sound, Spotify and the service were gone until a reboot).
 - The hardware watchdog was already on (Raspberry Pi OS arms it), and caught one of my too-harsh memory tests by rebooting the box.
 - Review: RED (3 must-fix: a declined reboot was never retried, a failing step reset everything, and the reboot rights reached past logged-in admins), fixed with a root-decided reboot, then GREEN.
-- Not tested end to end yet: the real reboot through root's checks (needs the box up for over an hour with nobody logged in).
+- Later verified end to end: with the box up over an hour and nobody logged in, the TV user asked and root rebooted it ("the kiosk is stuck: rebooting"); earlier it correctly said no (too soon after boot, and while I was logged in).
 
 ### 3. Health warnings: done
 - A background check every minute: weak power supply (the Pi's own under-voltage flag), overheating, storage under 1 GB, a storage card gone read-only (failing), no internet, a network that blocks the browser's secure DNS, and weak Wi-Fi. Brief blips don't count (the internet must fail twice a minute apart, weak Wi-Fi three times running; never on Ethernet or during Wi-Fi setup).
@@ -52,3 +52,10 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - I can't reflash the card remotely (the Pi runs from it), so tonight's testing installed onto the running SD system instead. Next time you flash a test card, use a test copy.
 - Review: RED twice (a failed run left a half-made copy with access but no label; then my fix could delete the input if given the same file twice), fixed, then GREEN.
 - For your list: the release image has the SSH server enabled but nobody can log in (no keys, every password locked). Disabling it outright would be tidier.
+
+### 5. YouTube ad blocking: done, one thing to confirm
+- YouTube's TV app no longer gets its ads: the player's ad schedule (all three fields, or it waits for an ad) and the home screen's ad tiles, banner and promo rows are dropped as the app reads them, and video requests say "no ads" so YouTube doesn't hold back the first seconds of video. The same approach as TizenTube and youtube-webos. Never throws: if YouTube changes things, the app still works, just with ads.
+- On the test Pi: a video played smoothly with it on; a fresh load of the app stripped 2 ad entries from what YouTube actually sent (on some loads, 0: YouTube varies what it sends, checked against the previous version).
+- **Please check signed in:** the guest session never got a pre-roll ad, so I couldn't watch one being removed. Play a few videos signed in and see if any ad shows.
+- Review: GREEN first time (optional test gaps filled in).
+- Note: YouTube's guest mode asks "who's watching" on every fresh load of the TV app.

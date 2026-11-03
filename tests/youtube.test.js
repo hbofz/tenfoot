@@ -2,8 +2,8 @@
 const assert = require("assert");
 const fs = require("fs");
 const src = fs.readFileSync(__dirname + "/../inject/youtube.js", "utf8");
-const run = (loc) => {
-  const g = { location: loc, Response: class { async json() { return {}; } }, setInterval() {},
+const run = (loc, body = {}) => {
+  const g = { location: loc, Response: class { async text() { return JSON.stringify(body); } }, setInterval() {},
               window: {}, JSON: { parse: JSON.parse, stringify: JSON.stringify },
               MediaSource: { isTypeSupported: () => true } };  // like Chromium: ignores extra parameters
   new Function(...Object.keys(g), src)(...Object.values(g));
@@ -11,10 +11,33 @@ const run = (loc) => {
 };
 
 const yt = run({ hostname: "www.youtube.com", pathname: "/tv", hash: "" });
-// No ad handling: a response with ad fields comes through as it was.
-const player = yt.JSON.parse(JSON.stringify({ adPlacements: [{ x: 1 }], playerAds: [{ y: 2 }] }));
-assert.deepStrictEqual(player, { adPlacements: [{ x: 1 }], playerAds: [{ y: 2 }] });
-assert.strictEqual(yt.JSON.stringify({ playbackContext: { contentPlaybackContext: {} } }).includes("NoAd"), false);
+// YouTube's own ads: the player's schedule goes, the video's formats are still sorted.
+const player = yt.JSON.parse(JSON.stringify({ adPlacements: [{ x: 1 }], playerAds: [{ y: 2 }], adSlots: [{ z: 3 }], videoDetails: { id: "v" },
+  streamingData: { adaptiveFormats: [{ mimeType: 'video/webm; codecs="vp9"' }, { mimeType: 'video/mp4; codecs="avc1.640028"' }] } }));
+assert.deepStrictEqual(Object.keys(player).sort(), ["streamingData", "videoDetails"]);
+assert.strictEqual(player.streamingData.adaptiveFormats.length, 1);
+// ...wherever the player response sits
+assert.deepStrictEqual(yt.JSON.parse(JSON.stringify([{ playerResponse: { adPlacements: [1], ok: 1 } }])), [{ playerResponse: { ok: 1 } }]);
+// the home screen: the banner, ad tiles in the list and inside a row, and a Short that's an ad
+const home = yt.JSON.parse(JSON.stringify({ contents: { tvBrowseRenderer: { content: { sectionListRenderer: { contents: [
+  { tvMastheadRenderer: {} }, { adSlotRenderer: {} }, { promoShelfRenderer: {} },
+  { shelfRenderer: { content: { horizontalListRenderer: { items: [{ tileRenderer: { id: 1 } }, { adSlotRenderer: {} }, { tileRenderer: { id: 2 } }] } } } },
+] } } } }, entries: [{ command: { reelWatchEndpoint: { adClientParams: { isAd: true } } } }, { command: { reelWatchEndpoint: { videoId: "s" } } }] }));
+const shelves = home.contents.tvBrowseRenderer.content.sectionListRenderer.contents;
+assert.strictEqual(shelves.length, 1);
+assert.deepStrictEqual(shelves[0].shelfRenderer.content.horizontalListRenderer.items.map((i) => i.tileRenderer.id), [1, 2]);
+assert.deepStrictEqual(home.entries, [{ command: { reelWatchEndpoint: { videoId: "s" } } }]);
+assert.ok(yt.window.__tenfoot.ads >= 8);
+// a Shorts feed on its own: "isAd" is all there is to go on
+assert.strictEqual(yt.JSON.parse(JSON.stringify({ entries: [{ command: { reelWatchEndpoint: { adClientParams: { isAd: true } } } }, { id: 1 }] })).entries.length, 1);
+// odd shapes never throw
+for (const odd of ['{"adSlots":null}', '{"contents":"x","isAd":1}', '"adSlots"', "null", "[null,1]"]) yt.JSON.parse(odd);
+// asking for a video: "no ads", on a copy (the app's own object may be frozen); anything else as it was
+const req = Object.freeze({ context: {}, playbackContext: Object.freeze({ contentPlaybackContext: Object.freeze({ vis: 0 }) }) });
+assert.deepStrictEqual(JSON.parse(yt.JSON.stringify(req)).playbackContext.contentPlaybackContext, { vis: 0, isInlinePlaybackNoAd: true });
+assert.deepStrictEqual(req.playbackContext.contentPlaybackContext, { vis: 0 });
+assert.strictEqual(yt.JSON.stringify({ a: 1 }), '{"a":1}');
+assert.strictEqual(yt.JSON.stringify({ a: 1 }, null, 1), '{\n "a": 1\n}');
 
 const fmts = yt.JSON.parse(JSON.stringify({ streamingData: { adaptiveFormats: [
   { mimeType: 'video/webm; codecs="vp9"' }, { mimeType: 'video/mp4; codecs="avc1.640028"' },
@@ -57,6 +80,8 @@ assert.deepStrictEqual(clean, { title: "plain", items: [1, 2] });
 (async () => {
   const r = await new yt.Response().json();       // fetch().json() path is hooked too
   assert.deepStrictEqual(r, {});
+  const ads = run({ hostname: "www.youtube.com", pathname: "/tv", hash: "" }, { playerAds: [1], items: [{ adSlotRenderer: {} }, { ok: 1 }] });
+  assert.deepStrictEqual(await new ads.Response().json(), { items: [{ ok: 1 }] });  // and stripped there too
   const other = run({ hostname: "www.google.com", pathname: "/", hash: "" });
   assert.strictEqual(other.window.__tenfoot, undefined); // other sites untouched
   const desk = run({ hostname: "www.youtube.com", pathname: "/watch", hash: "" });
