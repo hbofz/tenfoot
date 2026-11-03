@@ -2,6 +2,21 @@
 
 Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: research how it's usually built, build it, test it (unit tests, and on the SD-card test Pi when it needs real hardware), then a reviewer pass repeated until it's clean. One commit per feature. `main` is untouched; no GitHub releases were published.
 
+## For Hamzah in the morning
+
+1. **Back up `~/.config/tenfoot-release/signing.key`** (on the laptop). Every box trusts only that key for updates.
+2. **Merge `overnight` into `main`** when you're happy: one commit per feature, each tested on the test Pi and reviewed until clean. Nothing was published as a release.
+3. **Your TV ignores the HDMI-CEC "off" command.** Look in its settings for something like "turn off with connected devices" (CEC / Anynet+ / Bravia Sync / SimpLink, depending on the brand); until then the 4-hour standby only pauses and darkens the picture.
+4. **Check YouTube ads signed in.** The guest session never got a pre-roll ad, so I couldn't watch one being removed.
+5. **The test Pi's phone links changed:** I ran a real reset on it (Wi-Fi kept). Scan the QR code on the TV again.
+6. **Decisions for you:**
+   - The release image has the SSH server on (nobody can log in: no keys, every password locked). Turn it off entirely?
+   - Kernel and firmware updates: they need the Pi's tryboot so a bad kernel falls back by itself. Worth building next?
+   - Chromium rebuilds per release (about 3 h on 24 cores): CI and who pays.
+   - "Recently used apps first": I decided against reordering (it breaks the Right-Right-OK habit, and every TV platform keeps the row fixed); the home screen already opens on the last app, now by name. Reordering from the phone is easy to add if you want it.
+7. **Files on the laptop:** `~/tenfoot-build/out/` has a fresh release image and a TEST copy with access built in (both ~7 GB; the TEST one is readable only by you: don't share it). `~/.config/tenfoot-test/tailscale.tar.gz` is the test Pi's Tailscale identity (private).
+8. **Your USB system was not touched**, apart from my SSH key, which is gone again.
+
 ## Ranked plan
 
 | # | Feature | Status |
@@ -115,3 +130,10 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - Now `display_mode = "auto"` (the new default) picks from what the TV lists: 1080p at the best refresh up to 60, else the TV's own preferred mode, else the largest the Pi draws smoothly. An explicit mode is still honoured if the TV lists it.
 - On the test Pi's 4K TV: 31 modes listed, auto picks 1080p60; switched to 720p by hand, it was put back within 30 seconds; the kiosk starting fresh came up in 1080p60.
 - Review: GREEN (small fixes taken: a malformed setting is caught at load instead of leaving the TV asleep after every wake).
+
+### 13. "Recently used apps first": decided against, one fix instead
+- Every big TV platform keeps the app row fixed (reordering breaks the Right-Right-OK habit; studies agree), and the home screen already opens on the last app used. But it remembered that app by position, so switching Spotify off or adding Jellyfin moved focus to another app: now it's remembered by name. Tested on the Pi; review GREEN.
+
+### At the end
+- The project's full on-box check (`tests/box_check.py`) on the test Pi with everything from tonight: ALL OK (27 checks: security boundaries, Widevine, YouTube, Spotify, real key presses, the QR code).
+- Unit tests: 163, plus the home-screen and YouTube tests in node. All pass.

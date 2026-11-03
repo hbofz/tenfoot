@@ -75,10 +75,13 @@ if have:
     check(f"a photo is showing ({len(have)} downloaded)", wait(lambda: js("document.querySelectorAll('#photos img.on').length"), 40))
 
 first = js("[...document.querySelectorAll('.tile')].indexOf(document.activeElement)")
-api(a="key", k="right")
-moved = wait(lambda: js("[...document.querySelectorAll('.tile')].indexOf(document.activeElement)") != first, 5)
+for there, back in (("right", "left"), ("left", "right")):  # the home screen opens on the last app: maybe at an edge
+    api(a="key", k=there)
+    moved = wait(lambda: js("[...document.querySelectorAll('.tile')].indexOf(document.activeElement)") != first, 5)
+    if moved:
+        api(a="key", k=back)
+        break
 check("real key press through the virtual keyboard moves the focus", moved)
-api(a="key", k="left")
 
 for n, bad in enumerate(("http://127.0.0.1:9222/json", "file:///etc/passwd")):
     marker = ("9222", "passwd")[n]

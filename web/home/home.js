@@ -107,7 +107,11 @@ const tiles = ITEMS.map((a, n) => {
   return t;
 });
 
-let i = Math.min(store.get("tile", 0), tiles.length - 1);
+// The last app used, by name: a position would point at another app once the list changes (Spotify switched off,
+// Jellyfin added). (An older number still works.)
+const lastApp = store.get("tile", 0);
+let i = typeof lastApp === "string" ? Math.max(0, ITEMS.findIndex((a) => a.id === lastApp))
+  : Math.max(0, Math.min(Math.trunc(+lastApp) || 0, tiles.length - 1));
 let restTimers = [];
 function rest() {  // resting on one icon: it sways after a moment, the others dim a little later; after a minute it
   // holds still, so the Pi stops drawing frames for nobody
@@ -125,7 +129,7 @@ function focusTile(n) {
   // the grid keeps the last top-row app's picture (opening straight into the grid: the one above); back up from it,
   // the new one is swapped in under the fading wash
   if (!grid || shown < 0) showPhoto(photoOf[ITEMS[i % COLS].id], false, wasGrid && !grid);
-  store.set("tile", i);
+  store.set("tile", ITEMS[i].id);
   rest();
   update();
 }
@@ -344,7 +348,7 @@ function wake(e) {
 }
 for (const t of ["keydown", "mousemove", "mousedown", "wheel"]) addEventListener(t, wake, true);
 
-focusTile(i);
+if (tiles.length) focusTile(i);  // (an apps.json with nothing in it: no tiles to focus)
 for (const a of ITEMS.slice(0, COLS)) photo(photoOf[a.id]);  // decode the whole top row's pictures up front
 tick();
 setInterval(tick, 5000);
