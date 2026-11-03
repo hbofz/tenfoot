@@ -47,7 +47,7 @@ class Updater(unittest.TestCase):
         self.reboots = []
         self.healthy = True
         for name, value in {"FEED": base, "DIR": self.dir, "PUBLIC_KEY": base64.b64encode(pub).decode(),
-                            "CONFIG": self.tmp / "config.toml", "AIRPLAY_UNIT": self.tmp / "none", "NIGHT": range(24),
+                            "CONFIG": self.tmp / "config.toml", "synced": lambda: True, "AIRPLAY_UNIT": self.tmp / "none", "NIGHT": range(24),
                             "HEALTH_WAIT": 0, "reboot": lambda: self.reboots.append(1),
                             "answers": lambda url: self.healthy}.items():
             p = mock.patch.object(up, name, value)
@@ -169,6 +169,12 @@ class Updater(unittest.TestCase):
         self.assertEqual((st["version"], st["available"]["version"], st["available"]["notes"], self.reboots), ("0.1.0", "0.2.0", "notes 0.2.0", []))
         up.main("now")  # the phone's button
         self.assertEqual((self.status()["version"], len(self.reboots)), ("0.2.0", 1))
+
+    def test_no_night_install_on_an_unsynced_clock(self):
+        self.release("0.2.0")
+        with mock.patch.object(up, "synced", lambda: False):
+            up.main("check")
+        self.assertEqual((self.status()["available"]["version"], self.reboots), ("0.2.0", []))
 
     def test_modes(self):
         self.release("0.2.0")

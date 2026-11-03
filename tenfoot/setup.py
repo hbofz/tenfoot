@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import qrcode
 import qrcode.image.svg
 
+from . import clock
 from .apps import page_url
 from .config import CONFIG_DIR, RUN, WEB_HOME, write_private
 
@@ -224,6 +225,7 @@ def handler(setup):
                 data = json.loads(self.rfile.read(n))
                 if not isinstance(data, dict):
                     raise ValueError("not a form")
+                clock.adopt(data.get("timezone"))  # the setup phone knows where this box is
                 setup.submit(data.get("ssid"), data.get("password", ""))
                 self.reply(200, b"ok", "text/plain")
             except Exception as ex:

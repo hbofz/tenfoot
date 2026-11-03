@@ -7,6 +7,12 @@ UNITS=$HOME/.config/systemd/user
 mkdir -p "$CONF" "$UNITS"
 chmod 700 "$CONF"
 [ -e "$CONF/config.toml" ] || cp "$ROOT/config.example.toml" "$CONF/config.toml"
+# The first phone sets the timezone (tenfoot/clock.py), unless an admin already chose one: keep that.
+# (Europe/London and UTC are what Raspberry Pi OS and Debian start with: nobody chose those.)
+ZONE=$(readlink /etc/localtime 2>/dev/null | sed 's|.*zoneinfo/||')
+if [ "${IMAGE:-0}" = 0 ] && [ -n "$ZONE" ] && [ "$ZONE" != Europe/London ] && [ "$ZONE" != Etc/UTC ] && [ "$ZONE" != UTC ] && [ ! -e "$CONF/timezone-set" ]; then
+  echo "$ZONE" > "$CONF/timezone-set"
+fi
 setting() { (cd "$ROOT" && python3 -c "from tenfoot import config; print(config.load().$1)"); }
 NAME=$(setting name)
 fill() { sed -e "s|@ROOT@|$ROOT|g" -e "s|@NAME@|$NAME|g" "$1"; }

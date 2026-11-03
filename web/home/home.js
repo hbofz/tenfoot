@@ -249,7 +249,14 @@ async function weather() {  // Open-Meteo: free, no account. Set latitude and lo
     $("temp").textContent = `${Math.round(w.current.temperature_2m)}°`;
   } catch {}
 }
-function tick() { $("time").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+// A Pi has no clock battery: until it has synced over the network the time is stale, so it isn't shown. Asked of the
+// service (127.0.0.1:8766/clock) each minute; with no answer, the last one stands.
+let clockOk = false;
+async function checkClock() {
+  try { clockOk = (await (await fetch("http://127.0.0.1:8766/clock", { cache: "no-store", signal: AbortSignal.timeout(1500) })).json()).synced; } catch {}
+  tick();
+}
+function tick() { $("time").textContent = clockOk ? new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; }
 
 // ---------- The phone remote's QR: written by the service; hidden while it's missing ----------
 const qr = $("rq").firstElementChild;
@@ -330,6 +337,9 @@ focusTile(i);
 for (const a of ITEMS.slice(0, COLS)) photo(photoOf[a.id]);  // decode the whole top row's pictures up front
 tick();
 setInterval(tick, 5000);
+checkClock();
+for (let s = 3; s <= 30; s += 3) setTimeout(checkClock, s * 1000);  // just after boot it syncs within seconds
+setInterval(checkClock, 60 * 1000);
 weather();
 setInterval(weather, 15 * 60 * 1000);
 pollMusic();

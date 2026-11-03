@@ -1,6 +1,7 @@
 """python3 -m unittest discover tests : the parts with no TV or browser to hand."""
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -15,7 +16,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, config, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, clock, config, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -53,6 +54,57 @@ class Config(unittest.TestCase):
         for text in ('nmae = "typo"\n', 'remote_mode = "public"\n', 'remote_mode = "url"\n'):
             with self.assertRaises(SystemExit):
                 config.load(self.write(text))
+
+
+class Clock(unittest.TestCase):
+    def test_zone_names(self):
+        self.assertEqual(clock.canonical("Europe/London"), "Europe/London")
+        self.assertEqual(clock.canonical("UTC"), "Etc/UTC")
+        self.assertEqual(clock.canonical("Asia/Calcutta"), "Asia/Kolkata")  # an old name Chrome still sends
+        for bad in ("localtime", "posixrules", "../../etc/passwd", "/etc/passwd", "posix/Europe/London", "Mars/Base", "",
+                    None, 5, "Europe/London\n"):
+            self.assertIsNone(clock.canonical(bad), bad)
+
+    def setUp(self):
+        d = Path(tempfile.mkdtemp())
+        for p in (mock.patch.object(clock, "CONFIG_DIR", d), mock.patch.object(clock, "current", lambda: "Europe/London")):
+            p.start()
+            self.addCleanup(p.stop)
+        self.run_ = mock.patch.object(clock.subprocess, "run").start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_first_phone_sets_it_once(self):
+        self.assertIsNone(clock.adopt("Mars/Base"))  # a bad guess changes nothing, and doesn't count
+        self.assertIsNone(clock.adopt("UTC"))  # what privacy browsers say anywhere: doesn't count either
+        self.assertFalse(clock.mark().exists())
+        self.assertEqual(clock.adopt("America/Chicago"), "America/Chicago")
+        self.assertEqual(self.run_.call_args[0][0], ["timedatectl", "set-timezone", "America/Chicago"])
+        self.assertEqual(clock.mark().read_text(), "America/Chicago\n")
+        self.assertIsNone(clock.adopt("Asia/Tokyo"))  # a guest's phone later: ignored
+        self.assertEqual(self.run_.call_count, 1)
+        self.assertEqual(clock.set_zone("Asia/Tokyo"), "Asia/Tokyo")  # on purpose still works
+        self.run_.reset_mock()
+        clock.set_zone("Europe/London")  # already the box's zone: nothing to run
+        self.run_.assert_not_called()
+
+    def test_failed_set_doesnt_count(self):
+        self.run_.side_effect = subprocess.CalledProcessError(1, "timedatectl")
+        self.assertIsNone(clock.adopt("America/Chicago"))
+        self.assertFalse(clock.mark().exists())
+        self.run_.side_effect = None
+        self.assertEqual(clock.adopt("America/Chicago"), "America/Chicago")
+
+    def test_remote_and_setup_page_pass_it_on(self):
+        self.assertEqual(make_controls().handle({"a": "timezone", "tz": "America/Chicago"}), "America/Chicago")
+        clock.mark().unlink()
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), setup.handler(WifiSetup.box(self)))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        body = json.dumps({"ssid": "Home", "password": "x", "timezone": "Asia/Kolkata"}).encode()
+        with self.assertRaises(urllib.error.HTTPError):  # the Wi-Fi part fails (not in setup), the zone still lands
+            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}/join", data=body, method="POST"), timeout=5)
+        self.assertEqual(clock.mark().read_text(), "Asia/Kolkata\n")
 
 
 class Apps(unittest.TestCase):

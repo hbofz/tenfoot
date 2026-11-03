@@ -55,6 +55,15 @@ def newer(a, b):
     return b is None or parse(a) > parse(b)
 
 
+def synced():
+    """Has the clock synced? A Pi has no clock battery: until then the hour is a guess."""
+    try:
+        return subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True,
+                              text=True, timeout=30).stdout.strip() == "yes"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def installed():
     try:
         return (DIR / "version").read_text().strip()
@@ -272,7 +281,7 @@ def main(cmd):
                 st["available"] = None
                 return save(st)
             m = look(st)
-            if m and mode() == "auto" and time.localtime().tm_hour in NIGHT:
+            if m and mode() == "auto" and synced() and time.localtime().tm_hour in NIGHT:
                 install(st, m)
         elif cmd == "now":
             m = look(st)

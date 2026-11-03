@@ -49,7 +49,7 @@ $("back").onclick = () => { $("form").hidden = true; $("pick").hidden = false; }
 $("form").onsubmit = async (e) => {
   e.preventDefault();
   const ssid = chosen ? chosen.ssid : $("ssid").value.trim();
-  const r = await fetch("/join", { method: "POST", body: JSON.stringify({ ssid, password: chosen && chosen.open ? "" : $("pw").value }) });
+  const r = await fetch("/join", { method: "POST", body: JSON.stringify({ ssid, password: chosen && chosen.open ? "" : $("pw").value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
   if (r.ok) { $("form").hidden = true; $("done").hidden = false; }
   else { $("err").textContent = await r.text(); $("err").hidden = false; }
 };

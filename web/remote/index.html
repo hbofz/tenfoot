@@ -672,4 +672,6 @@ async function accounts() {
 }
 
 poll();
+// The first phone to connect tells the TV its timezone (tenfoot/clock.py ignores the ones after).
+api({ a: "timezone", tz: Intl.DateTimeFormat().resolvedOptions().timeZone }).catch(() => {});
 </script>

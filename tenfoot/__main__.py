@@ -1,12 +1,13 @@
-"""python3 -m tenfoot [serve | render | links | link NAME | revoke NAME]"""
+"""python3 -m tenfoot [serve | render | links | link NAME | revoke NAME | timezone [ZONE]]"""
 import glob
 import json
+import subprocess
 import sys
 import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from . import browser, cec, config, kiosk, links, server, setup, spotify, watcher
+from . import browser, cec, clock, config, kiosk, links, server, setup, spotify, watcher
 from .apps import load_apps
 from .controls import Controls
 from .inputs import Input
@@ -81,6 +82,15 @@ def main(args):
         render(settings)
     elif args[0] in ("links", "link", "revoke"):
         links.cli(settings, args)
+    elif args == ["timezone"]:
+        print(clock.current())
+    elif len(args) == 2 and args[0] == "timezone":
+        try:
+            zone = clock.set_zone(args[1])
+        except (ValueError, OSError, subprocess.SubprocessError) as ex:
+            sys.exit(f"{ex} {getattr(ex, 'stderr', '') or ''}".strip())
+        clock.mark().write_text(zone + "\n")  # chosen on purpose: phones no longer guess
+        print(zone)
     else:
         sys.exit(__doc__)
 

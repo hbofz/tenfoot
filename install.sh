@@ -56,6 +56,8 @@ fi
 sudo tee /etc/polkit-1/rules.d/50-tenfoot.rules >/dev/null <<POLKIT
 polkit.addRule(function (action, subject) {
   if (subject.user == "$TV" && action.id.indexOf("org.freedesktop.NetworkManager.") == 0) return polkit.Result.YES;
+  // The first phone to connect sets the timezone (tenfoot/clock.py).
+  if (subject.user == "$TV" && action.id == "org.freedesktop.timedate1.set-timezone") return polkit.Result.YES;
   // The phone's "Update now": start the updater, nothing else. It only ever installs a newer, signed release.
   if (subject.user == "$TV" && action.id == "org.freedesktop.systemd1.manage-units" &&
       action.lookup("unit") == "tenfoot-update-now.service" && action.lookup("verb") == "start") return polkit.Result.YES;
