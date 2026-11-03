@@ -1,12 +1,12 @@
 #!/bin/sh
 # First-boot test of an image on a PC, with no Pi: boots a throwaway copy in QEMU's Raspberry Pi 4 model, then reports
 # what happened from the copy's own files. It has no Wi-Fi, TV or network, so those need the real thing.
-#   tools/vm-boot.sh IMAGE.img.xz [SECONDS]      Needs qemu-system-arm, and sudo to read the result.
+#   tools/vm-boot.sh IMAGE.img[.xz] [SECONDS]      Needs qemu-system-arm, and sudo to read the result.
 set -eu
 IMG=$1; SECS=${2:-600}
 W=$(mktemp -d "${TMPDIR:-/tmp}/tenfoot-vm.XXXXXX"); M=$W/mnt; mkdir -p "$M"
 trap 'sudo umount "$M/boot/firmware" "$M" 2>/dev/null || true; [ -n "${L:-}" ] && sudo losetup -d "$L" 2>/dev/null; rm -rf "$W"' EXIT
-xz -dc "$IMG" > "$W/sd.img"
+case "$IMG" in *.xz) xz -dc "$IMG" > "$W/sd.img" ;; *) cp --sparse=always "$IMG" "$W/sd.img" ;; esac
 qemu-img resize -q -f raw "$W/sd.img" 16G   # the emulated SD card must be a power of two
 L=$(sudo losetup --find --show --partscan "$W/sd.img")
 sudo mount -o ro "${L}p1" "$M"
@@ -25,7 +25,7 @@ echo "--- auto-login files"; sudo ls -la --time-style=long-iso "$M/etc/systemd/s
 J=$(sudo ls -d "$M"/var/log/journal/*/ 2>/dev/null | head -1)
 if [ -n "$J" ]; then
   sudo journalctl -D "$J" --no-pager --list-boots 2>/dev/null | tail -3 | cut -c1-90
-  echo "--- what happened"; sudo journalctl -D "$J" --no-pager -o short-monotonic 2>/dev/null | grep -E "Started getty@tty1|login.*session opened for user tenfoot|setup: |crashed|Started tenfoot.service" | head -12 | cut -c1-125
+  echo "--- what happened"; sudo journalctl -D "$J" --no-pager -o short-monotonic 2>/dev/null | grep -E "Started getty@tty1|login.*session opened for user tenfoot|setup: |crashed|Started tenfoot.service|Started ssh.service|Started tailscaled.service" | head -14 | cut -c1-125
 else echo "no journal; serial log:"; tail -25 "$W/serial.log" | cut -c1-120; fi
 sudo grep -nE "autologin|getty" "$M/var/log/cloud-init.log" 2>/dev/null | tail -5 | cut -c1-120
 cp "$W/serial.log" "${TMPDIR:-/tmp}/tenfoot-vm-serial.log" 2>/dev/null || true

@@ -5,3 +5,6 @@ __pycache__/
 /wlroots-build/
 /spotify/
 .venv/
+*.img
+*.img.xz
+*.img.xz.sha256

@@ -45,3 +45,10 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - Low on storage: rebuildable browser caches are cleared before the browser starts (never sign-ins).
 - On the test Pi: all good reads as no cards; blocking the secure DNS host showed "Websites won't load on this network" after about 100 s.
 - Review: RED (weak Wi-Fi card wouldn't clear after plugging in Ethernet, as it tells you to), fixed, then GREEN.
+
+### Test cards with access built in (your request)
+- `tools/test-access.sh RELEASE.img TEST.img` makes a *copy* of a finished image with a way in for testing: the `couch` admin user with this laptop's SSH key, SSH on, and Tailscale with the test Pi's identity (saved privately in `~/.config/tenfoot-test/`, never in git), so a freshly flashed test card is reachable with nobody in the room. The copy says TEST IMAGE on its boot partition.
+- Release images from `tools/build-image.sh` contain none of it. I built a fresh release image tonight and checked: only `root` and `tenfoot` (both locked), no keys, no Tailscale. The test copy booted in the Pi emulator with SSH and Tailscale starting.
+- I can't reflash the card remotely (the Pi runs from it), so tonight's testing installed onto the running SD system instead. Next time you flash a test card, use a test copy.
+- Review: RED twice (a failed run left a half-made copy with access but no label; then my fix could delete the input if given the same file twice), fixed, then GREEN.
+- For your list: the release image has the SSH server enabled but nobody can log in (no keys, every password locked). Disabling it outright would be tidier.

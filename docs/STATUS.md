@@ -29,7 +29,7 @@ Also checked on the Pi with no TV, on a virtual screen, by `tests/box_check.py`:
 - **Image first boot on a PC:** `tools/vm-boot.sh IMAGE.img.xz` boots a copy in QEMU's Raspberry Pi 4 model and reads the result from its disk. It's slow (a first boot needs about 8 minutes) and has no Wi-Fi, TV or network, but it proves boot, auto-login and the services without touching a real Pi.
 - **On a real Pi:** flash the image to an SD card and boot it. The Pi tries the SD card before USB, so a Pi with a working system on USB boots the card when it's in, and goes back to USB when it's out.
 
-To test on a real Pi you can reach remotely, add test-only access to the flashed card before its first boot: an SSH key through `user-data` on the boot partition, an empty `ssh` file there, and your remote-access tool. With Tailscale, copy `/var/lib/tailscale/tailscaled.state` **and** `/var/lib/tailscale/certs`; without the certificates, Funnel hangs fetching new ones. Never ship these in an image.
+To test on a real Pi you can reach remotely, flash a test copy instead of the release image: `tools/test-access.sh tenfoot-….img tenfoot-TEST.img` adds an admin user (`couch`, key-only, passwordless sudo) with your SSH key, switches SSH on, and, if `~/.config/tenfoot-test/tailscale.tar.gz` exists (a node's `tailscaled.state` and `certs/`; without the certificates Funnel hangs fetching new ones), installs Tailscale with that identity so the box joins your tailnet by itself. The copy is labelled `TEST-IMAGE.txt` on its boot partition. Never publish or hand out a test copy: whoever holds the key owns the box. Release images from `tools/build-image.sh` contain none of this. Build and boot-test images under a big disk (not a small `/tmp`): about 7 GB each.
 
 ## How to build
 
