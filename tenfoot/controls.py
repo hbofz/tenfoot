@@ -1,11 +1,12 @@
 """What the remotes can do. Every command, from the phone or a physical remote, comes through handle()."""
 import subprocess
+import threading
 
 from .apps import app_of, app_urls, page_url, to_url
 from .cursor import Cursor
 from .inputs import KEYS
 from .overlay import toast_js, volume_js
-from . import clock, health, updates
+from . import clock, health, settings as phone_settings, updates
 
 SINK = "@DEFAULT_AUDIO_SINK@"
 
@@ -59,6 +60,31 @@ class Controls:
             pass  # browser restarting
         return s
 
+    def change_settings(self, cmd):
+        """From the phone's Settings (tenfoot/settings.py): save, then make it show. Not from the guest link."""
+        if cmd.get("by") == "guest":
+            raise ValueError("Guests can't change the TV's settings")
+        new, zone = phone_settings.checked(cmd)
+        with phone_settings.lock:
+            renamed = "name" in new and new["name"] != self.settings.name
+            self.settings = phone_settings.save(new)
+            phone_settings.render(self.settings)
+        try:
+            if self.browser.current_url().endswith("/home.html"):
+                self.go(page_url("home.html"))  # the new weather or name, now
+        except Exception:
+            pass
+        if renamed:
+            # the TV's own name over HDMI is set as the service starts: start again, once this reply is out
+            threading.Timer(1.5, subprocess.run, (["systemctl", "--user", "restart", "tenfoot"],)).start()
+            phone_settings.rename_services(self.settings.name)
+        if zone:
+            try:
+                clock.mark().write_text(clock.set_zone(zone) + "\n")  # chosen on purpose: phones stop guessing
+            except Exception as ex:
+                raise ValueError(f"Saved, but couldn't set the clock: {ex}") from None
+        return phone_settings.current(self.settings)
+
     def go(self, url):
         self.browser.one_tab()
         self.browser.navigate(url)
@@ -100,6 +126,10 @@ class Controls:
             self.volume(k)
         elif a == "tv" and k in ("on", "off") and self.tv:
             self.tv.set_power(k)
+        elif a == "settings":
+            if k == "set":
+                return self.change_settings(cmd)
+            return {"canChange": False} if cmd.get("by") == "guest" else {**phone_settings.current(self.settings), "canChange": True}
         elif a == "health":
             return health.status()
         elif a == "timezone":

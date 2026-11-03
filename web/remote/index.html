@@ -143,7 +143,8 @@
   .acct .x { width: 48px; height: 48px; border-radius: 14px; color: var(--muted); }
   .acct .locked { opacity: .5; }
   .row2 { display: flex; gap: 8px; }
-  #sw { display: grid; gap: 14px; }
+  #sw, .stack { display: grid; gap: 14px; }
+  .pill.on { background: var(--fg); color: var(--bg); }
   .row2 .pill { flex: 1; }
   .add { color: #1ed760; }
   #sync { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
@@ -234,6 +235,8 @@
 
 <dialog id="settings" class="bottom"><div class="sheet">
   <header><h2>Settings</h2><button class="done" data-close>Done</button></header>
+  <h3 id="tvH" hidden>This TV</h3>
+  <div id="tvSet" class="stack" hidden></div>
   <h3 id="healthH" hidden>Needs attention</h3>
   <div id="healthList"></div>
   <h3>Spotify on the TV</h3>
@@ -615,7 +618,53 @@ function button(label, cls, onclick) {
   b.onclick = onclick;
   return b;
 }
-$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); accounts(); software(); healthList(); });
+$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); tvSettings(); accounts(); software(); healthList(); });
+// The TV's own settings (tenfoot/settings.py): name, the weather's place (which sets the clock's timezone too), its
+// unit, and updates. Not for the guest link. The place search asks Open-Meteo straight from this phone.
+async function tvSettings() {
+  const box = $("tvSet"), make = (tag, props) => Object.assign(document.createElement(tag), props);
+  let s;
+  try { s = await api({ a: "settings" }); } catch (e) { return; }
+  $("tvH").hidden = box.hidden = !s.canChange;
+  if (!s.canChange) return;
+  const change = async (what, msg) => {
+    try { await api({ a: "settings", k: "set", ...what }); toast(msg); } catch (e) { toast(why(e)); }
+    tvSettings();
+  };
+  const pills = (options, now, key, msg) => {
+    const row = make("div", { className: "row2" });
+    row.append(...options.map(([value, label]) => {
+      const b = button(label, "pill" + (value === now ? " on" : ""), () => value !== now && change({ [key]: value }, msg(label)));
+      b.setAttribute("aria-pressed", value === now);
+      return b;
+    }));
+    return row;
+  };
+  const nameForm = make("form", {});
+  const name = make("input", { value: s.name, maxLength: 30, placeholder: "The TV's name", autocomplete: "off" });
+  nameForm.append(name, make("button", { textContent: "Rename" }));
+  nameForm.onsubmit = (e) => { e.preventDefault(); if (name.value.trim() !== s.name) change({ name: name.value }, `Renamed to ${name.value.trim()}`); };
+  const placeForm = make("form", {}), found = make("div", { className: "stack" });
+  const place = make("input", { placeholder: s.place ? `Weather: ${s.place}` : "Weather: type your town", autocomplete: "off", enterKeyHint: "search" });
+  placeForm.append(place, make("button", { textContent: "Find" }));
+  placeForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!place.value.trim()) return;
+    try {
+      const r = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&format=json&name=${encodeURIComponent(place.value.trim())}`)).json();
+      found.replaceChildren(...(r.results || []).map((p) => {
+        const label = [p.name, p.admin1, p.country].filter(Boolean).join(", ");
+        return button(label, "pill", () => change({ weather: { latitude: p.latitude, longitude: p.longitude, timezone: p.timezone, place: label } }, `Weather and clock: ${p.name}`));
+      }));
+      if (!found.children.length) found.append(make("p", { className: "note", textContent: "No place by that name." }));
+    } catch { toast("Couldn't search: is this phone online?"); }
+  };
+  box.replaceChildren(nameForm, placeForm, found,
+    make("p", { className: "note", textContent: `Clock: ${s.timezone || "not set"}.` }),
+    pills([["celsius", "°C"], ["fahrenheit", "°F"]], s.unit, "unit", (l) => `Temperatures in ${l}`),
+    pills([["auto", "Update by itself"], ["notify", "Ask me first"]], s.updates, "updates", (l) => l),
+    make("p", { className: "note", textContent: s.updates === "off" ? "Updates are off on this TV (set in its config file)." : "Updates install at night, between 3 and 6." }));
+}
 async function healthList() {
   try {
     const list = await api({ a: "health" });

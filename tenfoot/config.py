@@ -20,6 +20,7 @@ CONFIG_DIR = Path(os.environ.get("TENFOOT_CONFIG", "~/.config/tenfoot")).expandu
 @dataclass(frozen=True)
 class Settings:
     name: str = "Tenfoot"  # what the TV, Spotify and AirPlay call this box
+    place: str = ""  # the weather's place, as picked on the phone ("Lisbon, Portugal")
     latitude: float | None = None  # for the weather on the home screen; none = no weather
     longitude: float | None = None
     temperature_unit: str = "celsius"  # or "fahrenheit"

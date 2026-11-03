@@ -18,7 +18,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, clock, config, health, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, clock, config, health, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -175,6 +175,51 @@ class Health(unittest.TestCase):
         with mock.patch.object(health, "reaches", lambda url: False), \
                 mock.patch.object(health.socket, "getaddrinfo", mock.Mock(side_effect=OSError)):
             self.assertEqual(health.internet(), "down")
+
+
+class PhoneSettings(unittest.TestCase):
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "config.toml").write_text((config.ROOT / "config.example.toml").read_text())
+        for p in (mock.patch.object(config, "CONFIG_DIR", self.d), mock.patch.object(clock, "CONFIG_DIR", self.d),
+                  mock.patch.object(config, "RUN", self.d / "run"), mock.patch.object(clock, "set_zone", lambda z: z),
+                  mock.patch.object(phone_settings, "rename_services", mock.Mock()), mock.patch.object(controls.threading, "Timer", mock.Mock())):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_edit_keeps_the_rest(self):
+        text = 'name = "Tenfoot"    # what it is called\n# latitude = 51.5\nspotify = true\n'
+        out = phone_settings.edit(text, {"name": 'Den "TV"', "latitude": 44.45, "place": "Lisbon"})
+        self.assertEqual(out, 'name = "Den \\"TV\\""\nlatitude = 44.45\nspotify = true\nplace = "Lisbon"\n')
+
+    def test_change_from_the_phone(self):
+        c = make_controls()
+        out = c.handle({"a": "settings", "k": "set", "by": "house", "name": "Den",
+                        "weather": {"latitude": 38.7223, "longitude": -9.1393, "timezone": "Europe/Lisbon", "place": "Lisbon, Portugal"},
+                        "unit": "fahrenheit", "updates": "notify"})
+        s = config.load(self.d / "config.toml")
+        self.assertEqual((s.name, s.latitude, s.place, s.temperature_unit, s.updates), ("Den", 38.7223, "Lisbon, Portugal", "fahrenheit", "notify"))
+        self.assertIn("# How phones reach the remote", (self.d / "config.toml").read_text())  # the comments stay
+        self.assertEqual(clock.mark().read_text(), "Europe/Lisbon\n")  # the place set the clock, for good
+        self.assertIn('"temperatureUnit": "fahrenheit"', (self.d / "run" / "config.js").read_text())  # the home screen's, now
+        phone_settings.rename_services.assert_called_once_with("Den")
+        self.assertEqual(out["name"], "Den")
+
+    def test_refused(self):
+        c = make_controls()
+        before = (self.d / "config.toml").read_text()
+        for cmd in ({"by": "guest", "unit": "celsius"}, {"name": "x" * 31}, {"name": 'a"b'}, {"name": "%h$x"}, {"name": "-TV"}, {"updates": "off"},
+                    {"weather": {"latitude": 1, "longitude": 2, "place": "\U0001F600"}},
+                    {"unit": "kelvin"}, {"weather": {"latitude": 91, "longitude": 0}}, {"weather": {"latitude": "x", "longitude": 0}}, {}):
+            with self.assertRaises((ValueError, KeyError)):
+                c.handle({"a": "settings", "k": "set", "by": "house", **cmd})
+        self.assertEqual((self.d / "config.toml").read_text(), before)
+        self.assertEqual(make_controls().handle({"a": "settings", "by": "guest"}), {"canChange": False})  # not even where it is
+        self.assertTrue(make_controls().handle({"a": "settings", "by": "house"})["canChange"])
+
+    def test_hand_edited_keys_are_found(self):
+        out = phone_settings.edit('  latitude = 1.0\n"name" = "x"\n', {"latitude": 2.5, "name": "Den"})
+        self.assertEqual(out, 'latitude = 2.5\nname = "Den"\n')
 
 
 class Apps(unittest.TestCase):

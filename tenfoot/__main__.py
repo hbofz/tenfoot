@@ -1,6 +1,5 @@
 """python3 -m tenfoot [serve | render | links | link NAME | revoke NAME | timezone [ZONE]]"""
 import glob
-import json
 import os
 import socket
 import subprocess
@@ -12,6 +11,7 @@ from http.server import ThreadingHTTPServer
 
 from . import browser, cec, clock, config, health, kiosk, links, server, setup, spotify, watcher
 from .apps import load_apps
+from .settings import render
 from .controls import Controls
 from .inputs import Input
 
@@ -25,16 +25,6 @@ def forever(loop, *args):
         except Exception as ex:
             print(f"{loop.__name__} crashed: {ex!r}; restarting it", flush=True)
         time.sleep(5)
-
-
-def render(settings):
-    """Write what the file:// home screen reads: the apps and the settings it needs."""
-    config.RUN.mkdir(parents=True, exist_ok=True)
-    apps = [{k: a[k] for k in ("id", "name", "url", "color")} for a in load_apps(settings)]
-    page = {"name": settings.name, "latitude": settings.latitude, "longitude": settings.longitude,
-            "temperatureUnit": settings.temperature_unit}
-    (config.RUN / "display-mode").write_text(settings.display_mode)  # for system/kiosk.sh
-    (config.RUN / "config.js").write_text(f"window.APPS = {json.dumps(apps)};\nwindow.TENFOOT = {json.dumps(page)};\n")
 
 
 def qr_loop(settings, house):

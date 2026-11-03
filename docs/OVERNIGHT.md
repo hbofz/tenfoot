@@ -11,9 +11,9 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 3 | Health warnings: undervoltage, heat, disk, no internet | done |
 | 4 | Offline and error screens | done |
 | 5 | YouTube ad blocking | done (a real pre-roll not seen yet) |
-| 6 | OS security updates (Widevine included) | in progress |
-| 7 | Phone Settings page | |
-| 8 | Fewer SD card writes, power-cut survival | |
+| 6 | OS security updates (Widevine included) | done (kernel not yet) |
+| 7 | Phone Settings page | done |
+| 8 | Fewer SD card writes, power-cut survival | in progress |
 | 9 | Idle handling inside apps (screensaver, TV standby) | |
 | 10 | "Send logs" bundle | |
 | 11 | Factory reset and sign-out | |
@@ -28,7 +28,7 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - The first phone to connect sets the box's timezone (sent by the Wi-Fi setup page and the remote). Later phones (guests, trips) are ignored. `UTC`-style guesses from privacy browsers don't count. `tenfoot timezone ZONE` changes it on purpose.
 - Old names browsers still send (`Asia/Calcutta`) map to current ones. Only names tzdata lists are accepted (the reviewer caught that `localtime` would have looped the clock for good).
 - The home screen hides the clock until it has synced (no clock battery on a Pi). The updater's 3-6 am window waits for a synced clock too.
-- On the test Pi: set through polkit as the TV's user, Chromium switched zone live with no restart, the clock shows and hides correctly. The test Pi is now on America/Chicago.
+- On the test Pi: set through polkit as the TV's user, Chromium switched zone live with no restart, the clock shows and hides correctly.
 - Review: RED (6 findings), fixed, then GREEN.
 
 ### 2. Whole-box watchdog and memory guard: done
@@ -66,3 +66,16 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - On the test Pi: a non-existent domain showed it with Try again focused; real remote presses moved between the buttons, went Home, and went Back; a site blocked then unblocked came back by itself within 5 s.
 - Not covered: a dead server whose connection times out, and certificate errors, still get Chromium's page (Chromium lumps those together; noted in the code).
 - Review: RED three times (a swallowed Back key that I found on the Pi myself; overlapping retries; a reload loop that could keep a slow site from ever loading), fixed, then GREEN.
+
+### 6. OS security updates: done (kernel and firmware not yet)
+- Raspberry Pi OS Lite installs no updates by itself; nothing on these boxes was ever getting security fixes. Now, once a week (Sunday night, auto mode), the updater takes Debian's security and point-release updates of Debian's own packages, plus Widevine. Never Raspberry Pi's other builds: the 1080p60 browser and compositor need exactly the cage, wlroots and Mesa they were built against, and those are now held.
+- The old packages are saved first; if the box isn't healthy after the reboot they go back. A download that fails (Wi-Fi down at 4 am) just waits a week; a version is only given up on after failing twice; a rollback cut short by a power cut finishes on the next boot.
+- On the test Pi: the first real run updated 15 packages (libnss3, curl, expat, ca-certificates, tzdata and more); with the TV service stopped on purpose, all 15 went back to their exact old versions; run again normally, they were kept. The patched video path was untouched.
+- Not yet: kernel and firmware (needs the Pi's tryboot so a bad kernel falls back by itself). A known risk it can't undo: a power cut at the exact moment a system update rebuilds the boot files.
+- Review: RED (a 4 am Wi-Fi drop would have black-listed every pending security fix), fixed, then GREEN.
+
+### 7. Phone Settings: done
+- New "This TV" section in Settings on the phone: rename the TV (Spotify and AirPlay follow), pick the weather's town from a search (which sets the clock's timezone too), °C or °F, and updates automatic or ask first. Hidden from the guest QR link, which can't read or change any of it.
+- Saved into config.toml without losing its comments, checked before it's written.
+- On the test Pi, through the running service: everything landed (config, home screen, Spotify's name, the system clock); guest and bad names refused. Put back afterwards.
+- Review: GREEN, with small fixes taken (a name starting with "-" would have crashed AirPlay).
