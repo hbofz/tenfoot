@@ -14,8 +14,8 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 | 6 | OS security updates (Widevine included) | done (kernel not yet) |
 | 7 | Phone Settings page | done |
 | 8 | Fewer SD card writes, power-cut survival | done |
-| 9 | Idle handling inside apps (screensaver, TV standby) | in progress |
-| 10 | "Send logs" bundle | |
+| 9 | Idle handling inside apps (screensaver, TV standby) | done |
+| 10 | "Send logs" bundle | in progress |
 | 11 | Factory reset and sign-out | |
 | 12 | Display adaptivity (720p and 4K TVs) | |
 | 13 | Recently used apps first | |
@@ -87,3 +87,12 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - Power-cut test, without a smart plug: 5 forced instant resets (sysrq-b) during YouTube. Every time it came back by itself in under 1.5 minutes, 0 filesystem errors, browser and service up, no dialogs. (A forced reset keeps the card powered, so it's not quite a real cut: a smart plug would test that.)
 - Not done on purpose: a read-only system (it would lose saved Wi-Fi, logins and updates), the browser profile in RAM (loses logins on a cut).
 - Review: GREEN.
+
+### 9. Idle: screensaver over apps, and TV standby: done
+- Nobody at the remote for 10 minutes and nothing playing (a paused show, a menu): the picture dims, so an OLED doesn't burn in. The first press only wakes it. The home screen keeps its own photo screensaver (same setting).
+- Nobody at the remote for 4 hours, even mid-show (YouTube autoplaying all night): a one-minute warning on screen, then it pauses, dims and turns the TV off over HDMI-CEC. Not while Spotify plays, and not if the TV is showing another input.
+- "Playing" is the page's video or the browser's sound actually reaching the speakers (that sees players inside frames, like Crunchyroll's, and DRM video). A short gap between episodes doesn't count as quiet. The phone checking in every few seconds doesn't count as someone there.
+- Settings: `screensaver_minutes` and `standby_hours` in config.toml (0 = never).
+- On the test Pi with short timers: dimmed on a page after ~45 s, a phone press woke it without doing anything else; the warning, then pause and dim. **Your TV ignores the CEC "off" command** (many need "turn off with connected devices" switched on in their own settings), so it stays on but dark and still. Worth checking that TV setting.
+- Bugs found on the way: the dim script had a syntax error the browser reported without raising, so the service thought it had dimmed (now every overlay script is compile-tested); a first standby version un-dimmed itself right away.
+- Review: RED (4: dim state drifting after a page change, dimming in the gap between episodes, video in frames unseen, the cursor path not waking), fixed, then GREEN.

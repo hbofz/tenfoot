@@ -9,6 +9,7 @@ import time
 from evdev import InputDevice, ecodes, list_devices
 
 from .apps import page_url
+from . import idle
 from .kiosk import pin_display
 
 # Keys from a physical remote: over CEC the kernel turns them into keys on the vc4-hdmi-N input
@@ -100,6 +101,7 @@ class TV:
     def __init__(self, settings, browser, on_off=lambda: None):
         self.settings, self.browser, self.on_off = settings, browser, on_off
         self.power = None  # "on", "standby"... as power_loop last heard it
+        self.showing = None  # True: the TV picked this input; False: another one (or its own apps); None: not heard
 
     def set_power(self, k):
         dev, pa = connected_device()
@@ -150,7 +152,10 @@ class TV:
             mon = subprocess.Popen(["stdbuf", "-oL", "cec-follower", "-d", dev, "-v"], stdout=subprocess.PIPE, text=True)
             try:
                 for line in mon.stdout:
-                    if route_event(st, line):
+                    announce = route_event(st, line)
+                    if "want" in st:
+                        self.showing = st["want"]
+                    if announce:
                         time.sleep(0.3)
                         _ctl(dev, "--active-source", f"phys-addr={st['pa']}", "--to", "0", "--menu-status", "menu-state=activated")
                         print(f"cec: {dev} announced active source {st['pa']}", flush=True)
@@ -210,7 +215,10 @@ def remote_keys_loop(controls, patterns):
             for ev in newest_repeats([e for e in events if e.type == ecodes.EV_KEY]):
                 names = key_names(ecodes.KEY.get(ev.code, ""))
                 arrow = next((ARROWS[n] for n in names if n in ARROWS), None)
-                if cursor.on and arrow:  # the cursor glides from press to release
+                if cursor.on and arrow:  # the cursor glides from press to release (past handle(): count it here)
+                    if ev.value == 1 and idle.wake(controls.browser):
+                        continue  # that press only woke the picture
+                    idle.poke()
                     if ev.value != 2:
                         cursor.glide(arrow, ev.value == 1)
                     continue

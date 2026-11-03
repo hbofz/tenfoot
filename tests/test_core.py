@@ -2,6 +2,7 @@
 import base64
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -18,7 +19,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, clock, config, health, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, clock, config, health, idle, settings as phone_settings, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -220,6 +221,123 @@ class PhoneSettings(unittest.TestCase):
     def test_hand_edited_keys_are_found(self):
         out = phone_settings.edit('  latitude = 1.0\n"name" = "x"\n', {"latitude": 2.5, "name": "Den"})
         self.assertEqual(out, 'latitude = 2.5\nname = "Den"\n')
+
+
+class Idle(unittest.TestCase):
+    S = config.Settings(screensaver_minutes=10, standby_hours=4)
+    APP = "https://www.netflix.com/browse"
+
+    def setUp(self):
+        mock.patch.object(idle, "dimmed", False).start()
+        mock.patch.object(idle, "browser_audio", lambda: False).start()
+        self.addCleanup(mock.patch.stopall)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node")
+    def test_overlay_scripts_compile(self):
+        from tenfoot import overlay
+        for js in (overlay.dim_js(True), overlay.dim_js(False), overlay.toast_js("x", 1000), overlay.volume_js(50, False), idle.PROBE):
+            subprocess.run(["node", "-e", "new Function(process.argv[1])", js], check=True, capture_output=True)
+
+    def test_decide(self):
+        d = lambda idle_s, quiet_s=10 ** 6, music=False, url=self.APP, warned=None: idle.decide(idle_s, quiet_s, music, url, self.S, warned)
+        self.assertIsNone(d(599))
+        self.assertEqual(d(600), "dim")
+        self.assertIsNone(d(600, quiet_s=0))  # a show playing: never dimmed
+        self.assertIsNone(d(3000, quiet_s=20))  # the gap between two episodes of a binge isn't quiet
+        self.assertIsNone(d(600, url=apps.page_url("home.html")))  # the home screen has its own
+        self.assertEqual(d(4 * 3600, quiet_s=0), "warn")  # hours of autoplay with nobody there
+        self.assertEqual(d(4 * 3600, quiet_s=0, warned=True), "standby")
+        self.assertNotIn(d(4 * 3600, music=True), ("warn", "standby"))  # music on: someone's listening
+        self.assertIsNone(idle.decide(10 ** 6, 10 ** 6, False, self.APP, config.Settings(screensaver_minutes=0, standby_hours=0), None))
+        idle.dimmed = True
+        self.assertEqual(d(5), "undim")
+
+    def test_only_presses_count(self):
+        c = make_controls()
+        idle.last = 0
+        c.handle({"a": "state"})
+        c.handle({"a": "settings"})
+        self.assertEqual(idle.last, 0)  # the phone checking in
+        c.handle({"a": "key", "k": "down"})
+        self.assertGreater(idle.last, 0)
+
+    def test_the_waking_press_only_wakes(self):
+        inp, b = FakeInput(), FakeBrowser()
+        c = make_controls(inp=inp, browser=b)
+        idle.dimmed = True
+        with mock.patch.object(b, "evaluate", lambda js: {"result": {"value": True}}):
+            c.handle({"a": "key", "k": "down"})  # the page was dim: this press only wakes it
+        self.assertEqual((idle.dimmed, inp.log), (False, []))
+        c.handle({"a": "key", "k": "down"})
+        self.assertEqual(len(inp.log), 1)
+        idle.dimmed = True
+        with mock.patch.object(b, "evaluate", lambda js: {"result": {"value": False}}):
+            c.handle({"a": "key", "k": "down"})  # we thought so, but the page had moved on and wasn't: not swallowed
+        self.assertEqual(len(inp.log), 2)
+
+    def run_loop(self, pages, tv, rounds_end):
+        """The loop on a fake clock; pages(t) -> what the page says; returns the scripts it ran."""
+        t, calls, dim = [0.0], [], [False]
+
+        class Page:
+            def evaluate(self, js):
+                calls.append(js)
+                if js != idle.PROBE and "tenfoot-dim" in js:
+                    dim[0] = "!true" in js  # it goes dark when told to
+                if js == idle.PROBE:
+                    p = pages(t[0])
+                    return {"result": {"value": json.dumps({**p, "dimmed": dim[0] if p["dimmed"] is None else p["dimmed"]})}}
+                return {"result": {"value": True}}
+
+        def sleep(sec):
+            t[0] += sec
+            if t[0] > rounds_end:
+                raise StopIteration
+        with mock.patch.object(idle.time, "sleep", sleep), mock.patch.object(idle.time, "monotonic", lambda: t[0]), \
+                mock.patch.object(idle, "last", 0.0):
+            with self.assertRaises(StopIteration):
+                idle.loop(Page(), tv, None, self.S)
+        return calls
+
+    def page(self, playing=False, dimmed=None, url=None):  # dimmed None: as the page was last told
+        return {"playing": playing, "since": 1e9, "url": url or self.APP, "dimmed": dimmed}
+
+    def test_loop_warns_then_turns_off(self):
+        tv = mock.Mock(power="on", showing=True)
+        calls = self.run_loop(lambda t: self.page(playing=True), tv, 4 * 3600 + 200)
+        tv.set_power.assert_called_once_with("off")
+        tv.on_off.assert_called_once()
+        self.assertTrue(any("turns off in a minute" in js for js in calls))
+        self.assertEqual(len([js for js in calls if "tenfoot-dim" in js and js != idle.PROBE]), 1)  # dimmed only at the end
+
+    def test_not_while_on_another_input(self):
+        tv = mock.Mock(power="on", showing=False)
+        self.run_loop(lambda t: self.page(playing=True), tv, 4 * 3600 + 200)
+        tv.set_power.assert_not_called()
+
+    def test_a_new_page_while_dim_is_dimmed_again(self):
+        # dimmed at 10 minutes; at 15 the page reloads by itself (its overlay gone): dimmed again, not left bright
+        state, dims = {"dim": False, "t": 0}, []
+
+        def page(t):
+            if state["t"] < 900 <= t:
+                state["dim"] = False  # the reload
+            state["t"] = t
+            return self.page(dimmed=state["dim"])
+        real = idle.set_dim
+
+        def set_dim(browser, on):
+            state["dim"] = on
+            dims.append((state["t"], on))
+            return real(browser, on)
+        with mock.patch.object(idle, "set_dim", set_dim):
+            self.run_loop(page, mock.Mock(power="on", showing=True), 1000)
+        self.assertEqual(dims, [(600, True), (900, True)])
+
+    def test_sound_from_a_frame_counts_as_playing(self):
+        with mock.patch.object(idle, "browser_audio", lambda: True):
+            calls = self.run_loop(lambda t: self.page(), mock.Mock(power="on", showing=True), 1200)
+        self.assertFalse([js for js in calls if js != idle.PROBE and "tenfoot-dim" in js])
 
 
 class Apps(unittest.TestCase):

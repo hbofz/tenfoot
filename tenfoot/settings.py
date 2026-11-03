@@ -23,7 +23,7 @@ def render(settings):
     config.RUN.mkdir(parents=True, exist_ok=True)
     apps = [{k: a[k] for k in ("id", "name", "url", "color")} for a in load_apps(settings)]
     page = {"name": settings.name, "latitude": settings.latitude, "longitude": settings.longitude,
-            "temperatureUnit": settings.temperature_unit}
+            "temperatureUnit": settings.temperature_unit, "saver": settings.screensaver_minutes * 60}
     (config.RUN / "display-mode").write_text(settings.display_mode)  # for system/kiosk.sh
     (config.RUN / "config.js").write_text(f"window.APPS = {json.dumps(apps)};\nwindow.TENFOOT = {json.dumps(page)};\n")
 

@@ -21,6 +21,11 @@ spotify = true
 # HDMI-CEC remotes show up as vc4-hdmi-N. Add a Bluetooth or USB remote by name:
 # remote_devices = ["vc4-hdmi-\\d+", "My Remote"]
 
+# Nobody at the remote: after this many minutes with nothing playing, the picture dims (over apps; the home screen shows
+# its photos); after this many hours, the TV turns off over HDMI-CEC, even mid-show. 0: never.
+# screensaver_minutes = 10
+# standby_hours = 4
+
 # Updates, signed by Tenfoot's release key, from GitHub:
 #   "auto"    installs a new release between 3 and 6 at night, then restarts
 #   "notify"  says on the TV that one's ready; install it from Settings on the phone remote

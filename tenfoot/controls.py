@@ -6,9 +6,11 @@ from .apps import app_of, app_urls, page_url, to_url
 from .cursor import Cursor
 from .inputs import KEYS
 from .overlay import toast_js, volume_js
-from . import clock, health, settings as phone_settings, updates
+from . import clock, health, idle, settings as phone_settings, updates
 
 SINK = "@DEFAULT_AUDIO_SINK@"
+PASSIVE = {"state", "apps", "health", "settings", "update", "timezone"}  # the phone checking in: not someone at the remote
+WAKE = {"key", "back", "move", "click", "scroll"}  # on a dimmed screen these only wake it
 
 
 def back_keys(url):
@@ -91,6 +93,8 @@ class Controls:
 
     def handle(self, cmd):
         a, k = cmd.get("a"), cmd.get("k")
+        if (a not in PASSIVE or k in ("set", "now")) and idle.wake(self.browser) and a in WAKE:
+            return None  # the press that wakes the picture does nothing else
         if self.cursor.on and a in ("move", "click", "scroll"):
             self.cursor.set(False, quiet=True)  # the phone's touchpad has the pointer now
         if a == "cursor":

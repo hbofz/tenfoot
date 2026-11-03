@@ -36,6 +36,32 @@ VOLUME_BAR = """(() => {
 })()""".replace("HOST", HOST)
 
 
+DIM = """(() => {
+  let d = document.getElementById("tenfoot-dim");
+  HOST
+  if (!ON) {
+    const was = !!d || !!window.__tenfootDimmed;
+    d?.remove();
+    if (window.__tenfootDimmed) window.__tenfootDimmed.style.filter = "";
+    window.__tenfootDimmed = null;
+    return was;
+  }
+  if (!d) {
+    d = document.createElement("div");
+    d.id = "tenfoot-dim";
+    d.style.cssText = "position:fixed;inset:0;z-index:2147483646;background:#000;opacity:.85;pointer-events:none;transition:opacity 2s";
+  }
+  if (d.parentNode !== host) host.appendChild(d);
+  // a full screen video or frame shows above anything outside it: dim it directly
+  if (fs && /^(VIDEO|IFRAME)$/.test(fs.tagName)) { fs.style.filter = "brightness(.15)"; window.__tenfootDimmed = fs; }
+})()""".replace("HOST", HOST)
+
+
+def dim_js(on):
+    """Darken whatever's on screen (tenfoot/idle.py), or bring it back."""
+    return DIM.replace("ON", "true" if on else "false")
+
+
 def toast_js(text, ms):
     return TOAST.replace("TEXT", json.dumps(text)).replace("MS", str(int(ms)))
 

@@ -307,7 +307,7 @@ setTimeout(pollHealth, 3000);
 setInterval(pollHealth, 60 * 1000);
 
 // ---------- Just the picture: Up from the top row, or the screensaver after SAVER seconds idle (?saver=N) ----------
-const SAVER = +(params.get("saver") || 600);
+const SAVER = params.has("saver") ? +params.get("saver") || 600 : window.TENFOOT.saver ?? 600;  // screensaver_minutes; 0: never
 let idleTimer, placeTimer, rotateTimer;
 function showPlace() {
   document.body.classList.add("showplace");
@@ -340,7 +340,7 @@ function wake(e) {
   }
   if (e.type !== "init") rest();
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { b.add("idle"); b.remove("rest", "dim"); rotate(); }, SAVER * 1000);
+  if (SAVER > 0) idleTimer = setTimeout(() => { b.add("idle"); b.remove("rest", "dim"); rotate(); }, SAVER * 1000);
 }
 for (const t of ["keydown", "mousemove", "mousedown", "wheel"]) addEventListener(t, wake, true);
 

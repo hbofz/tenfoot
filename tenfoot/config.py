@@ -31,6 +31,8 @@ class Settings:
     spotify: bool = True  # Spotify Connect, through go-librespot
     jellyfin_url: str = ""
     remote_devices: list[str] = field(default_factory=lambda: [r"vc4-hdmi-\d+"])  # input devices to grab as TV remotes
+    screensaver_minutes: float = 10  # nobody at the remote and nothing playing: dim the picture (0: never)
+    standby_hours: float = 4  # nobody at the remote: turn the TV off over HDMI-CEC, even mid-show (0: never)
     updates: str = "auto"  # "auto" (installs at night), "notify" (waits for the phone) or "off"; read by system/tenfoot-update
 
     @property
@@ -57,6 +59,8 @@ def load(path=None):
     settings = Settings(**values)
     if settings.remote_mode not in ("lan", "tailscale", "url"):
         raise SystemExit(f"{path}: remote_mode must be lan, tailscale or url")
+    if not (settings.screensaver_minutes >= 0 and settings.standby_hours >= 0):
+        raise SystemExit(f"{path}: screensaver_minutes and standby_hours can't be negative")
     if settings.updates not in ("auto", "notify", "off"):
         raise SystemExit(f"{path}: updates must be auto, notify or off")
     if settings.remote_mode == "url" and not settings.remote_url.startswith(("http://", "https://")):
