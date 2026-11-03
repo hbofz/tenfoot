@@ -5,7 +5,7 @@ from .apps import app_of, app_urls, page_url, to_url
 from .cursor import Cursor
 from .inputs import KEYS
 from .overlay import toast_js, volume_js
-from . import clock, updates
+from . import clock, health, updates
 
 SINK = "@DEFAULT_AUDIO_SINK@"
 
@@ -100,6 +100,8 @@ class Controls:
             self.volume(k)
         elif a == "tv" and k in ("on", "off") and self.tv:
             self.tv.set_power(k)
+        elif a == "health":
+            return health.status()
         elif a == "timezone":
             return clock.adopt(cmd.get("tz"))
         elif a == "update":

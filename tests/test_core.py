@@ -17,7 +17,7 @@ import numpy as np
 import websocket
 from cryptography.fernet import Fernet
 
-from tenfoot import apps, cec, clock, config, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
+from tenfoot import apps, cec, clock, config, health, controls, cursor, kiosk, links, lyrics, server, setup, sites, spotify, visualizer, watcher
 from tenfoot.apps import app_of, to_url
 
 JF = "http://192.168.1.20:8096"
@@ -106,6 +106,74 @@ class Clock(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):  # the Wi-Fi part fails (not in setup), the zone still lands
             urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{srv.server_address[1]}/join", data=body, method="POST"), timeout=5)
         self.assertEqual(clock.mark().read_text(), "Asia/Kolkata\n")
+
+
+class Health(unittest.TestCase):
+    OK = dict(bits=0, temp_c=45, free=20 << 30, readonly=False, net="ok", weak=False)
+
+    def titles(self, **change):
+        return [p["title"] for p in health.problems(**{**self.OK, **change})]
+
+    def test_all_good(self):
+        self.assertEqual(self.titles(), [])
+        self.assertEqual(health.throttle_bits("throttled=0x50005\n"), 0x50005)
+        self.assertEqual(health.throttle_bits("error"), 0)
+
+    def test_each_problem(self):
+        self.assertEqual(self.titles(bits=0x50000), ["The power supply is too weak"])  # it happened earlier: still worth fixing
+        self.assertEqual(self.titles(bits=0x1), ["The power supply is too weak"])
+        self.assertEqual(self.titles(bits=0x5), ["The power supply is too weak"])  # throttled for power, not heat
+        self.assertEqual(self.titles(bits=0x8), ["Tenfoot is too hot"])
+        self.assertEqual(self.titles(temp_c=81), ["Tenfoot is too hot"])
+        self.assertEqual(self.titles(free=900 << 20), ["Storage is almost full"])
+        self.assertEqual(self.titles(readonly=True)[0], "The storage card is failing")
+        self.assertEqual(self.titles(net="down"), ["Connected, but no internet"])
+        self.assertEqual(self.titles(net="dns"), ["Websites won't load on this network"])
+        self.assertEqual(self.titles(weak=True), ["Weak Wi-Fi signal"])
+
+    def run_loop(self, net, devices, signal, rounds):
+        """The real health loop on a fake clock: net(round) -> internet()'s answer; returns what it showed each round."""
+        t, shown, self.checks = [0.0], [], []
+
+        def sleep(sec):
+            shown.append([p["title"] for p in health.status()])
+            t[0] += sec
+            if len(shown) >= rounds:
+                raise StopIteration
+
+        def run(*args):
+            return {"dev": devices(len(shown)), "list": f"*:{signal}\n", "get_throttled": "throttled=0x0\n"}.get(
+                next((a for a in args if a in ("dev", "list", "get_throttled") and (a != "dev" or "wifi" not in args)), ""), "")
+        fs = mock.Mock(f_bavail=10 << 20, f_frsize=1024, f_flag=0)
+        with mock.patch.object(health.time, "sleep", sleep), mock.patch.object(health.time, "monotonic", lambda: t[0] + 5), \
+                mock.patch.object(health, "run", run), mock.patch.object(health, "internet", lambda: (self.checks.append(1), net(len(shown)))[1]), \
+                mock.patch.object(health.os, "statvfs", lambda p: fs), mock.patch.object(health, "_now", []):
+            with self.assertRaises(StopIteration):
+                health.loop()
+        return shown
+
+    WIFI = "wifi:connected:Home\n"
+
+    def test_loop_internet_needs_two_misses(self):
+        shown = self.run_loop(lambda r: "dns" if 0 <= r < 3 else "ok", lambda r: self.WIFI, 70, rounds=6)
+        self.assertEqual(shown, [[], ["Websites won't load on this network"], ["Websites won't load on this network"], [], [], []])
+        # checked at once (round 0), again a minute after a miss, then every 5 minutes once fine
+        self.assertEqual(len(self.checks), 4)  # rounds 0, 1, 2 (a minute apart while failing), 3 (fine), then not till 8
+
+    def test_loop_weak_wifi_but_not_on_ethernet(self):
+        self.assertEqual(self.run_loop(lambda r: "ok", lambda r: self.WIFI, 12, rounds=4)[-1], ["Weak Wi-Fi signal"])  # 3 in a row
+        self.assertEqual(self.run_loop(lambda r: "ok", lambda r: "ethernet:connected:Wired\n" + self.WIFI, 12, rounds=4)[-1], [])
+        self.assertEqual(self.run_loop(lambda r: "ok", lambda r: "wifi:connected:tenfoot-setup\n", 0, rounds=4)[-1], [])  # setup hotspot
+
+    def test_internet_kinds(self):
+        with mock.patch.object(health, "reaches", lambda url: True):
+            self.assertEqual(health.internet(), "ok")
+        with mock.patch.object(health, "reaches", lambda url: url != health.DOH), \
+                mock.patch.object(health.socket, "getaddrinfo", lambda *a: [()]):
+            self.assertEqual(health.internet(), "dns")  # the internet works, the browser's secure DNS doesn't
+        with mock.patch.object(health, "reaches", lambda url: False), \
+                mock.patch.object(health.socket, "getaddrinfo", mock.Mock(side_effect=OSError)):
+            self.assertEqual(health.internet(), "down")
 
 
 class Apps(unittest.TestCase):

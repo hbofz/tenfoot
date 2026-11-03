@@ -15,6 +15,13 @@ if [ ! -e "$AUDIO_DONE" ]; then
   HDMI=$(wpctl status 2>/dev/null | sed -n "/Sinks:/,/Sources:/p" | grep HDMI | grep -o "[0-9]\+\." | head -1 | tr -d .)
   if [ -n "$HDMI" ]; then wpctl set-default "$HDMI"; wpctl set-volume "$HDMI" 1.0; wpctl set-mute "$HDMI" 0; touch "$AUDIO_DONE"; fi
 fi
+# Low on space (under 1 GB: tenfoot/health.py warns at the same point): clear what Chromium rebuilds by itself, never
+# sign-ins (Cookies, Local Storage, IndexedDB). Only here, before it starts: it holds these files open while it runs.
+P=$HOME/.config/tenfoot/chromium
+if [ "$(df --output=avail -k "$P" 2>/dev/null | tail -1)" -lt 1048576 ] 2>/dev/null; then
+  rm -rf "$P/Default/Service Worker/CacheStorage" "$P/Default/Service Worker/ScriptCache" "$P/Default/Code Cache" \
+    "$P/Default/GPUCache" "$P/GPUCache" "$P/GrShaderCache" "$P/GraphiteDawnCache" "$P/ShaderCache" "$P/component_crx_cache"
+fi
 # The 1080p60 build (docs/1080p60.md) when it's there; otherwise the system Chromium.
 CHROMIUM=${TENFOOT_CHROMIUM:-$ROOT/chromium/chrome}
 if [ -x "$CHROMIUM" ]; then

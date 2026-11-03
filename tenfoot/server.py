@@ -6,7 +6,7 @@ import json
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
-from . import clock, links, lyrics, updates, visualizer
+from . import clock, health, links, lyrics, updates, visualizer
 from .config import WEB_REMOTE
 
 
@@ -130,6 +130,8 @@ class Local(BaseHTTPRequestHandler):
         if url.path == "/setup":
             status = self.wifi_setup.status() if self.wifi_setup else {"state": "off"}
             return self.reply(200, json.dumps(status).encode())
+        if url.path == "/health":
+            return self.reply(200, json.dumps(health.status()).encode())
         if url.path == "/clock":
             return self.reply(200, json.dumps({"synced": clock.synced(), "zone": clock.current()}).encode())
         if url.path == "/update":

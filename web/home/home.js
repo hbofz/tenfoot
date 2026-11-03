@@ -295,6 +295,17 @@ async function pollUpdate() {
 setTimeout(pollUpdate, 3000);
 setInterval(pollUpdate, 60 * 1000);
 
+// ---------- Anything wrong with the box (tenfoot/health.py): a card each, until it's fixed; the worst two, or one
+// beside an update's news (more would run into the dock; the phone lists them all) ----------
+async function pollHealth() {
+  try {
+    const list = await (await fetch("http://127.0.0.1:8766/health", { cache: "no-store", signal: AbortSignal.timeout(1500) })).json();
+    $("health").replaceChildren(...list.slice(0, $("upd").hidden ? 2 : 1).map((p) => el("div", { className: "note warn" }, el("b", { textContent: p.title }), el("span", { textContent: p.detail }))));
+  } catch {}  // the service is restarting
+}
+setTimeout(pollHealth, 3000);
+setInterval(pollHealth, 60 * 1000);
+
 // ---------- Just the picture: Up from the top row, or the screensaver after SAVER seconds idle (?saver=N) ----------
 const SAVER = +(params.get("saver") || 600);
 let idleTimer, placeTimer, rotateTimer;

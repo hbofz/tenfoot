@@ -10,7 +10,7 @@ import time
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from . import browser, cec, clock, config, kiosk, links, server, setup, spotify, watcher
+from . import browser, cec, clock, config, health, kiosk, links, server, setup, spotify, watcher
 from .apps import load_apps
 from .controls import Controls
 from .inputs import Input
@@ -97,6 +97,7 @@ def serve(settings):
         music.lyrics_offset()  # (re)write the TV screen's copy of the lyrics timing
         workers.append((music.watch_logins,))
     workers.append((alive_loop,))
+    workers.append((health.loop,))
     for loop, *args in workers:
         threading.Thread(target=forever, args=(loop, *args), daemon=True).start()
     local = ThreadingHTTPServer(("127.0.0.1", config.LOCAL_PORT), server.Local)

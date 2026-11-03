@@ -234,6 +234,8 @@
 
 <dialog id="settings" class="bottom"><div class="sheet">
   <header><h2>Settings</h2><button class="done" data-close>Done</button></header>
+  <h3 id="healthH" hidden>Needs attention</h3>
+  <div id="healthList"></div>
   <h3>Spotify on the TV</h3>
   <div id="accts"></div>
   <div class="row2" id="acctBtns"></div>
@@ -613,7 +615,15 @@ function button(label, cls, onclick) {
   b.onclick = onclick;
   return b;
 }
-$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); accounts(); software(); });
+$("gear").addEventListener("click", () => { tick(); $("settings").showModal(); accounts(); software(); healthList(); });
+async function healthList() {
+  try {
+    const list = await api({ a: "health" });
+    $("healthH").hidden = !list.length;
+    $("healthList").replaceChildren(...list.map((p) => Object.assign(document.createElement("p"), { className: "note",
+      textContent: `${p.title}. ${p.detail}` })));
+  } catch {}
+}
 async function software() {
   const note = (text) => Object.assign(document.createElement("p"), { className: "note", textContent: text });
   try {

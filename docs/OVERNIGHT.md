@@ -8,8 +8,8 @@ Autonomous run started 2026-11-03, on the `overnight` branch. Each feature: rese
 |---|---------|--------|
 | 1 | Timezone and clock (the update window was in UTC) | done |
 | 2 | Whole-box watchdog and memory guard | done |
-| 3 | Health warnings: undervoltage, heat, disk, no internet | in progress |
-| 4 | Offline and error screens | |
+| 3 | Health warnings: undervoltage, heat, disk, no internet | done |
+| 4 | Offline and error screens | in progress |
 | 5 | YouTube ad blocking | |
 | 6 | OS security updates (Widevine included) | |
 | 7 | Phone Settings page | |
@@ -38,3 +38,10 @@ Needs Hamzah: Chromium rebuild pipeline (CI money/owner), signed-in testing per 
 - The hardware watchdog was already on (Raspberry Pi OS arms it), and caught one of my too-harsh memory tests by rebooting the box.
 - Review: RED (3 must-fix: a declined reboot was never retried, a failing step reset everything, and the reboot rights reached past logged-in admins), fixed with a root-decided reboot, then GREEN.
 - Not tested end to end yet: the real reboot through root's checks (needs the box up for over an hour with nobody logged in).
+
+### 3. Health warnings: done
+- A background check every minute: weak power supply (the Pi's own under-voltage flag), overheating, storage under 1 GB, a storage card gone read-only (failing), no internet, a network that blocks the browser's secure DNS, and weak Wi-Fi. Brief blips don't count (the internet must fail twice a minute apart, weak Wi-Fi three times running; never on Ethernet or during Wi-Fi setup).
+- Each problem is a short card on the TV home screen under the QR code (the worst two), saying what to do, and the full list is in Settings on the phone. It goes away by itself once fixed.
+- Low on storage: rebuildable browser caches are cleared before the browser starts (never sign-ins).
+- On the test Pi: all good reads as no cards; blocking the secure DNS host showed "Websites won't load on this network" after about 100 s.
+- Review: RED (weak Wi-Fi card wouldn't clear after plugging in Ethernet, as it tells you to), fixed, then GREEN.
