@@ -23,7 +23,7 @@ done
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade curl chromium cage wlr-randr libwidevinecdm0 \
   pipewire-pulse wireplumber pulseaudio-utils v4l-utils coreutils procps network-manager dnsmasq-base polkitd \
-  python3-evdev python3-websocket python3-qrcode python3-cryptography python3-numpy python3-pil >/dev/null
+  python3-evdev python3-websocket python3-qrcode python3-cryptography python3-numpy python3-pil earlyoom >/dev/null
 [ "$AIRPLAY" = 0 ] || {
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-upgrade --no-install-recommends uxplay gstreamer1.0-plugins-bad avahi-daemon >/dev/null
   if [ "$IMAGE" = 1 ]; then sudo systemctl enable avahi-daemon; else sudo systemctl enable --now avahi-daemon; fi
@@ -58,15 +58,26 @@ polkit.addRule(function (action, subject) {
   if (subject.user == "$TV" && action.id.indexOf("org.freedesktop.NetworkManager.") == 0) return polkit.Result.YES;
   // The first phone to connect sets the timezone (tenfoot/clock.py).
   if (subject.user == "$TV" && action.id == "org.freedesktop.timedate1.set-timezone") return polkit.Result.YES;
-  // The phone's "Update now": start the updater, nothing else. It only ever installs a newer, signed release.
-  if (subject.user == "$TV" && action.id == "org.freedesktop.systemd1.manage-units" &&
-      action.lookup("unit") == "tenfoot-update-now.service" && action.lookup("verb") == "start") return polkit.Result.YES;
+  // Two root jobs it may start, nothing else: the phone's "Update now" (only ever a newer, signed release), and the kiosk
+  // watchdog's last-resort reboot (which root refuses within an hour of starting, during updates, with anyone logged in).
+  if (subject.user == "$TV" && action.id == "org.freedesktop.systemd1.manage-units" && action.lookup("verb") == "start" &&
+      (action.lookup("unit") == "tenfoot-update-now.service" || action.lookup("unit") == "tenfoot-reboot-stuck.service"))
+    return polkit.Result.YES;
 });
 POLKIT
 sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
 echo 'address=/#/10.42.0.1' | sudo tee /etc/NetworkManager/dnsmasq-shared.d/tenfoot.conf >/dev/null
-echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/60-tenfoot.conf >/dev/null
+# A kernel panic reboots after 10 s instead of hanging (the hardware watchdog, which Raspberry Pi OS arms, covers freezes).
+printf 'net.ipv4.ip_unprivileged_port_start=80\nkernel.panic=10\n' | sudo tee /etc/sysctl.d/60-tenfoot.conf >/dev/null
 [ "$IMAGE" = 1 ] || sudo sysctl -q --system
+
+# Out of memory (1.8 GB and a browser): kill a browser tab early, never the compositor, the service, Spotify or SSH,
+# instead of the whole box crawling for minutes first. Chromium marks its tabs as the first to go already. Swap here
+# is zram, compressed RAM: "swap still free" doesn't mean memory is, so only available RAM counts (-s 100).
+echo "EARLYOOM_ARGS=\"-m 8 -s 100,100 -r 0 --prefer '^(chrome|chromium)\$' --avoid '^(cage|python3|sshd|sshd-session|systemd|go-librespot|uxplay)\$'\"" | \
+  sudo tee /etc/default/earlyoom >/dev/null
+sudo systemctl enable earlyoom 2>/dev/null
+[ "$IMAGE" = 1 ] || sudo systemctl restart earlyoom
 
 # Keep logs across reboots, capped, so an unexpected restart can be explained.
 sudo mkdir -p /etc/systemd/journald.conf.d
@@ -79,7 +90,7 @@ U=/var/lib/tenfoot-update
 V=$(cat "$SRC/VERSION")
 sudo install -d -m 755 "$U" "$U/releases"
 sudo install -m 755 "$SRC/system/tenfoot-update" /usr/local/sbin/tenfoot-update
-for f in tenfoot-update.service tenfoot-update-now.service tenfoot-update.timer; do sudo install -m 644 "$SRC/system/$f" /etc/systemd/system/; done
+for f in tenfoot-update.service tenfoot-update-now.service tenfoot-update.timer tenfoot-reboot-stuck.service; do sudo install -m 644 "$SRC/system/$f" /etc/systemd/system/; done
 case "$SRC" in
   "$U/releases/"*) ;;
   *) sudo rm -rf "$U/releases/$V"
@@ -99,6 +110,11 @@ printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear 
 sudo systemctl set-default multi-user.target >/dev/null
 [ "$IMAGE" = 1 ] || sudo systemctl daemon-reload
 
+# If its service manager dies (the kernel's last-ditch out-of-memory killer can take it), start it again: it brings
+# back everything under it (the service, Spotify, sound). Otherwise the TV limps on without them until a reboot.
+sudo mkdir -p "/etc/systemd/system/user@$(id -u "$TV").service.d"
+printf '[Service]\nRestart=always\nRestartSec=5\n' | sudo tee "/etc/systemd/system/user@$(id -u "$TV").service.d/tenfoot-restart.conf" >/dev/null
+[ "$IMAGE" = 1 ] || sudo systemctl daemon-reload
 # Keep its services running with nobody logged in, and wait for its service manager to be up.
 RUN=/run/user/$(id -u "$TV")
 if [ "$IMAGE" = 1 ]; then

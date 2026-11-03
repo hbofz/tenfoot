@@ -176,6 +176,28 @@ class Updater(unittest.TestCase):
             up.main("check")
         self.assertEqual((self.status()["available"]["version"], self.reboots), ("0.2.0", []))
 
+    def test_reboot_stuck_only_when_safe(self):
+        def ask(uptime=7200, users="1001 tenfoot yes lingering\n", updating=False):
+            run = mock.Mock(return_value=mock.Mock(stdout=users))
+            with mock.patch.object(up.time, "clock_gettime", lambda c: uptime), mock.patch.object(up.subprocess, "run", run):
+                try:
+                    up.reboot_stuck(updating)
+                    return "rebooted"
+                except SystemExit as e:
+                    return f"declined {e.code}"
+        self.assertEqual(ask(), "rebooted")
+        self.assertEqual(ask(uptime=600), "declined 1")  # within an hour of starting: never a reboot loop
+        self.assertEqual(ask(users="1001 tenfoot yes active\n1000 couch no active\n"), "declined 1")  # an admin's in
+        self.assertEqual(ask(updating=True), "declined 1")
+        self.assertEqual(ask(users="1001 tenfoot yes active\n1000 couch yes lingering\n"), "rebooted")  # nobody there
+        self.assertEqual(len(self.reboots), 2)
+
+    def test_a_download_cut_short_doesnt_stay_updating(self):
+        (self.dir / "status.json").write_text(json.dumps({"state": "downloading", "bad": []}))
+        with mock.patch.object(up, "NIGHT", range(0)):
+            up.main("check")
+        self.assertEqual(self.status()["state"], "idle")
+
     def test_modes(self):
         self.release("0.2.0")
         (self.tmp / "config.toml").write_text('updates = "notify"\n')

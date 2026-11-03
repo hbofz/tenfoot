@@ -1,10 +1,13 @@
 """python3 -m tenfoot [serve | render | links | link NAME | revoke NAME | timezone [ZONE]]"""
 import glob
 import json
+import os
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from http.server import ThreadingHTTPServer
 
 from . import browser, cec, clock, config, kiosk, links, server, setup, spotify, watcher
@@ -48,6 +51,32 @@ def qr_loop(settings, house):
         time.sleep(5)
 
 
+def notify(msg):
+    """Tell systemd something (sd_notify, without the library): the service's unit sets NOTIFY_SOCKET."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return False
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+        s.connect("\0" + addr[1:] if addr[0] == "@" else addr)
+        s.sendall(msg.encode())
+    return True
+
+
+def alive_loop():
+    """systemd restarts this service when it stops hearing "alive" for WatchdogSec (tenfoot.service): said only
+    while the home screen's local API answers and the kiosk watchdog keeps going round, so a deadlock or a stuck
+    thread restarts the service instead of leaving the TV without a remote."""
+    while True:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{config.LOCAL_PORT}/setup", timeout=10):
+                pass
+            if time.monotonic() - kiosk.last_beat < 4 * kiosk.CHECK_EVERY:
+                notify("WATCHDOG=1")
+        except Exception as ex:
+            print("alive: not answering:", ex, flush=True)
+        time.sleep(20)
+
+
 def serve(settings):
     render(settings)
     house = links.load_token()
@@ -67,6 +96,7 @@ def serve(settings):
     if music:
         music.lyrics_offset()  # (re)write the TV screen's copy of the lyrics timing
         workers.append((music.watch_logins,))
+    workers.append((alive_loop,))
     for loop, *args in workers:
         threading.Thread(target=forever, args=(loop, *args), daemon=True).start()
     local = ThreadingHTTPServer(("127.0.0.1", config.LOCAL_PORT), server.Local)

@@ -1,6 +1,7 @@
 """python3 -m unittest discover tests : the parts with no TV or browser to hand."""
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import threading
@@ -509,6 +510,81 @@ class CEC(unittest.TestCase):
 
 
 class Kiosk(unittest.TestCase):
+    def run_watchdog(self, answers, outcomes=None, rounds=30):
+        """The real watchdog loop, on a fake clock: answers(round) says if the page answered; returns [(t, step)]."""
+        clock_, taken = [0.0], []
+        outcomes = outcomes or {}
+
+        def sleep(sec):
+            clock_[0] += sec
+            if clock_[0] > rounds * kiosk.CHECK_EVERY:
+                raise StopIteration
+
+        class Page:
+            def evaluate(self, js):
+                if not answers(int(clock_[0] // kiosk.CHECK_EVERY)):
+                    raise TimeoutError
+
+        def step(name):
+            def act(*a):
+                taken.append((int(clock_[0]), name))
+                o = outcomes.get(name)
+                if isinstance(o, Exception):
+                    raise o
+                return o(len([n for _, n in taken if n == name])) if callable(o) else o
+            return act
+        with mock.patch.object(kiosk.time, "sleep", sleep), mock.patch.object(kiosk.time, "monotonic", lambda: clock_[0]), \
+                mock.patch.object(kiosk, "pin_display", lambda m: None), mock.patch.object(kiosk, "restart_chromium", step("chromium")), \
+                mock.patch.object(kiosk, "restart_cage", step("cage")), mock.patch.object(kiosk, "request_reboot", step("reboot")):
+            with self.assertRaises(StopIteration):
+                kiosk.watchdog(Page(), SETTINGS)
+        return taken
+
+    def test_escalation_in_order(self):
+        self.assertEqual(self.run_watchdog(lambda r: r < 2, {"reboot": True}, rounds=19),
+                         [(120, "chromium"), (180, "cage"), (360, "reboot"), (540, "reboot")])  # dead from 60 s; then
+        # each step after its wait, the reboot asked for again in case it didn't happen
+
+    def test_page_back_starts_over(self):
+        self.assertEqual(self.run_watchdog(lambda r: r < 2 or 5 <= r < 8, rounds=14),
+                         [(120, "chromium"), (300, "chromium"), (360, "cage")])  # answered again after the restart, so
+        # the second death (240 s) starts over from Chromium
+
+    def test_declined_reboot_is_asked_again(self):
+        self.assertEqual([t for t, n in self.run_watchdog(lambda r: r < 2, {"reboot": lambda n: n >= 3}) if n == "reboot"],
+                         [360, 540, 720, 900])  # declined twice (too soon after boot, say), then it happens; it keeps asking
+
+    def test_a_failing_step_doesnt_reset_it(self):
+        taken = self.run_watchdog(lambda r: r < 2, {"chromium": ProcessLookupError(), "cage": subprocess.TimeoutExpired("pkill", 10),
+                                                    "reboot": OSError("read-only")})
+        self.assertEqual([n for _, n in taken][:4], ["chromium", "cage", "reboot", "reboot"])
+
+    def test_reboot_only_with_a_tv_on_the_tv_box(self):
+        with mock.patch.object(kiosk.subprocess, "run") as run, mock.patch.object(kiosk, "hdmi_connected", lambda: True):
+            with mock.patch.object(kiosk.getpass, "getuser", lambda: "bb"):
+                self.assertFalse(kiosk.request_reboot())  # a developer's machine: never
+            with mock.patch.object(kiosk.getpass, "getuser", lambda: "tenfoot"):
+                with mock.patch.object(kiosk, "hdmi_connected", lambda: False):
+                    self.assertFalse(kiosk.request_reboot())  # no TV: nothing a reboot would bring back
+                run.assert_not_called()
+                run.return_value.returncode = 1
+                self.assertFalse(kiosk.request_reboot())  # root declined
+                run.return_value.returncode = 0
+                self.assertTrue(kiosk.request_reboot())
+                self.assertEqual(run.call_args[0][0], ["systemctl", "start", "tenfoot-reboot-stuck.service"])
+
+    def test_systemd_hears_alive(self):
+        from tenfoot.__main__ import notify
+        d = tempfile.mkdtemp()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sock.bind(d + "/notify")
+        self.addCleanup(sock.close)
+        with mock.patch.dict(os.environ, NOTIFY_SOCKET=d + "/notify"):
+            self.assertTrue(notify("WATCHDOG=1"))
+        self.assertEqual(sock.recv(100), b"WATCHDOG=1")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(notify("WATCHDOG=1"))  # run by hand, not by systemd
+
     def test_mode_check(self):
         self.assertTrue(kiosk.current_mode_ok("    1920x1080 px, 60.000000 Hz (preferred, current)\n", "1920x1080@60"))
         self.assertTrue(kiosk.current_mode_ok("    1920x1080 px, 60.000000 Hz (current)\n", "1920x1080@60"))

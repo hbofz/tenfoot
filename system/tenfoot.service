@@ -6,6 +6,11 @@ WorkingDirectory=@ROOT@
 ExecStart=/usr/bin/python3 -m tenfoot serve
 Restart=always
 RestartSec=3
+# Restarted if it stops saying it's alive (tenfoot/__main__.py alive_loop) for this long. On a hang, Python prints
+# every thread's stack to the journal first (SIGABRT with the fault handler on), to show where it was stuck.
+WatchdogSec=120
+TimeoutAbortSec=10
+Environment=PYTHONFAULTHANDLER=1
 # This service can never gain privileges, whatever happens to it.
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes

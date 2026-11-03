@@ -1,0 +1,6 @@
+[Unit]
+Description=Tenfoot: reboot a stuck kiosk, if it's safe to (the kiosk watchdog's last resort)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tenfoot-update reboot-stuck

@@ -5,6 +5,10 @@ files: a hacked browser runs as that user and must not be able to change what ro
   tenfoot-update check   the timer: finish a pending update, look for a new release, and install it at night
                          (updates = "auto" in config.toml; "notify" waits for the phone, "off" doesn't look)
   tenfoot-update now     install the newest release now (the phone's "Update now")
+  tenfoot-update reboot-stuck
+                         the kiosk watchdog's last resort (tenfoot/kiosk.py): reboot, unless it's been up less than an
+                         hour (so it can never loop), an update is under way, or someone is logged in (an admin
+                         mid-upgrade). Exits 1 when it declines; the watchdog asks again later.
 
 A release is update.json (its version, notes, and the tarball's address and SHA-256) plus update.json.sig, an Ed25519
 signature by the key tools/release.py holds. Nothing unsigned, and nothing older than what's installed, is installed.
@@ -266,16 +270,44 @@ def look(st):
     return m if new else None
 
 
+def others_logged_in():
+    """Anyone but the TV's own user with a login session (`loginctl list-users`: UID USER LINGER STATE; "lingering"
+    alone is no one there)."""
+    out = subprocess.run(["loginctl", "list-users", "--no-legend"], capture_output=True, text=True, timeout=30).stdout
+    return [f[1] for f in (ln.split() for ln in out.splitlines()) if len(f) >= 4 and f[1] != "tenfoot" and f[3] != "lingering"]
+
+
+def reboot_stuck(updating):
+    up = time.clock_gettime(time.CLOCK_BOOTTIME)
+    st = load()
+    who = others_logged_in()
+    why = ("it started less than an hour ago" if up < 3600 else
+           "an update is under way" if updating or st.get("pending") else
+           f"{', '.join(who)} is logged in" if who else None)
+    if why:
+        log(f"the kiosk is stuck, but not rebooting: {why}")
+        sys.exit(1)
+    log("the kiosk is stuck: rebooting")
+    reboot()
+
+
 def main(cmd):
     DIR.mkdir(parents=True, exist_ok=True)
     with open(DIR / "lock", "w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            if cmd == "reboot-stuck":
+                reboot_stuck(updating=True)
             return log("already running")
+        if cmd == "reboot-stuck":
+            return reboot_stuck(updating=False)
         st = load()
         if st.get("pending"):
             return finish(st)
+        if st["state"] != "idle":  # left over from a power cut mid-download: nothing runs but us
+            st["state"] = "idle"
+            save(st)
         if cmd == "check":
             if mode() == "off":
                 st["available"] = None
