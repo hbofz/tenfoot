@@ -56,23 +56,30 @@ if [ "$AIRPLAY" = 1 ]; then
   fill "$ROOT/system/tenfoot-airplay.service" > "$UNITS/tenfoot-airplay.service"
 fi
 
-# Sound: default output = the TV over HDMI, full volume, so the remote's volume is what you hear.
-systemctl --user daemon-reload
-systemctl --user start pipewire.socket pipewire-pulse.socket pipewire wireplumber pipewire-pulse
-sleep 2
-HDMI=$(wpctl status | sed -n "/Sinks:/,/Sources:/p" | grep HDMI | grep -o "[0-9]\+\." | head -1 | tr -d . || true)
-if [ -n "$HDMI" ]; then wpctl set-default "$HDMI"; wpctl set-volume "$HDMI" 1.0; wpctl set-mute "$HDMI" 0; fi
+# Nothing's running inside a disk image: just mark the services as enabled. (Sound is set up by kiosk.sh at first boot.)
+enable_unit() {
+  if [ "${IMAGE:-0}" = 1 ]; then
+    mkdir -p "$UNITS/default.target.wants"
+    ln -sf "$UNITS/$1.service" "$UNITS/default.target.wants/$1.service"
+  else
+    systemctl --user daemon-reload
+    systemctl --user enable "$1" 2>/dev/null
+  fi
+}
 
 (cd "$ROOT" && python3 -m tenfoot render)
 for s in tenfoot tenfoot-spotify tenfoot-airplay; do
-  if [ -e "$UNITS/$s.service" ]; then systemctl --user enable "$s" 2>/dev/null; systemctl --user restart "$s"; fi
+  if [ -e "$UNITS/$s.service" ]; then
+    enable_unit "$s"
+    [ "${IMAGE:-0}" = 1 ] || systemctl --user restart "$s"
+  fi
 done
 if [ "$WALLPAPERS" = 1 ]; then
   # One now, so the first boot has a picture (a rate-limited download mustn't hold up the install). The rest in
   # the background, resuming after a reboot until it has them all; the home screen uses what's there so far.
-  timeout 180 python3 "$ROOT/tools/wallpapers.py" 1 >/dev/null 2>&1 || echo "No wallpaper yet; they'll keep downloading in the background."
+  # (An image is built with them already in place, so this finds nothing to do.)
+  [ "${IMAGE:-0}" = 1 ] || timeout 180 python3 "$ROOT/tools/wallpapers.py" 1 >/dev/null 2>&1 || echo "No wallpaper yet; they'll keep downloading in the background."
   fill "$ROOT/system/tenfoot-wallpapers.service" > "$UNITS/tenfoot-wallpapers.service"
-  systemctl --user daemon-reload
-  systemctl --user enable tenfoot-wallpapers 2>/dev/null
-  systemctl --user start --no-block tenfoot-wallpapers
+  enable_unit tenfoot-wallpapers
+  [ "${IMAGE:-0}" = 1 ] || systemctl --user start --no-block tenfoot-wallpapers
 fi

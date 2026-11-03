@@ -44,7 +44,7 @@ def qr_loop(settings, house):
                 last = url
         except OSError:
             pass  # no network right now: the QR code waits for one
-        time.sleep(15)
+        time.sleep(5)
 
 
 def serve(settings):

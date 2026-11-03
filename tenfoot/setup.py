@@ -75,7 +75,7 @@ class Setup:
     def __init__(self, browser, run_dir=RUN, password_file=CONFIG_DIR / "setup-password"):
         self.browser, self.run_dir, self.password_file = browser, run_dir, password_file
         self.started = 0
-        self.state = "off"  # off | hotspot | joining
+        self.state = "off"  # off | checking (a new box, looking for a network) | hotspot | joining
         self.error = ""
         self.ssid = SSID
         self.password = ""
@@ -136,9 +136,15 @@ class Setup:
         self.show(page_url("setup.html"))
         time.sleep(1.5)  # let the phone's answer get out first
         self.nmcli("con", "down", HOTSPOT)
-        args = ["-w", str(JOIN_WAIT), "dev", "wifi", "connect", ssid, "ifname", "wlan0"]
-        # ponytail: the password is briefly on nmcli's command line; only someone already on this box could see it
-        result = self.nmcli(*args, *(["password", password] if password else []), timeout=JOIN_WAIT + 15)
+        if password:
+            # ponytail: the password is briefly on nmcli's command line; only someone already on this box could see it
+            result = self.nmcli("-w", str(JOIN_WAIT), "dev", "wifi", "connect", ssid, "password", password, "ifname", "wlan0", timeout=JOIN_WAIT + 15)
+        else:
+            # An open network, plainly: "connect" would pick its encrypted twin if it has one (OWE transition), which
+            # the Pi 4's Wi-Fi driver refuses ("invalid akm suite").
+            self.nmcli("con", "delete", ssid)
+            self.nmcli("con", "add", "type", "wifi", "ifname", "wlan0", "con-name", ssid, "ssid", ssid)
+            result = self.nmcli("-w", str(JOIN_WAIT), "con", "up", ssid, timeout=JOIN_WAIT + 15)
         if result.returncode == 0 and self.online():
             self.nmcli("con", "delete", HOTSPOT)
             if self.server:
@@ -150,7 +156,7 @@ class Setup:
             print("setup: joined a network", flush=True)
             return
         self.nmcli("con", "delete", ssid)  # don't keep a wrong password around
-        self.start(error=f"Couldn't join {ssid}. Check the password and try again.")
+        self.start(error=f"Couldn't join {ssid}." + (" Check the password and try again." if password else " Try again, or pick another network."))
 
     def submit(self, ssid, password):
         """From the phone. Checks what it can before the hotspot goes away."""
@@ -171,6 +177,8 @@ class Setup:
         if not self.has_wifi():
             return  # Ethernet only: nothing this can do
         missing_since = time.monotonic()
+        if not self.online() and not self.saved_wifi():
+            self.state = "checking"  # the home screen sees this and steps aside at once
         while True:
             time.sleep(10)
             if self.state == "joining":
@@ -183,6 +191,8 @@ class Setup:
                 continue
             if self.online():
                 missing_since = time.monotonic()
+                if self.state == "checking":
+                    self.state = "off"
             elif time.monotonic() - missing_since > (GRACE if self.saved_wifi() else FIRST_BOOT_GRACE):
                 self.start()
 

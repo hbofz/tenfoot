@@ -9,7 +9,13 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 # TVs can advertise 4K: 4x the pixels at half the frames turns every animation choppy.
 OUT=$(wlr-randr 2>/dev/null | awk '/^[A-Z]/ { print $1; exit }')
 [ -n "$OUT" ] && wlr-randr --output "$OUT" --mode "$(cat "$ROOT/web/home/run/display-mode" 2>/dev/null || echo 1920x1080@60)" 2>/dev/null
-# The optional zero-copy build (docs/1080p60.md) when it's installed; otherwise the system Chromium.
+# Sound, once: the TV over HDMI at full volume, so the remote's volume is what you hear. Tried each start until a TV is there.
+AUDIO_DONE=$HOME/.config/tenfoot/audio-set
+if [ ! -e "$AUDIO_DONE" ]; then
+  HDMI=$(wpctl status 2>/dev/null | sed -n "/Sinks:/,/Sources:/p" | grep HDMI | grep -o "[0-9]\+\." | head -1 | tr -d .)
+  if [ -n "$HDMI" ]; then wpctl set-default "$HDMI"; wpctl set-volume "$HDMI" 1.0; wpctl set-mute "$HDMI" 0; touch "$AUDIO_DONE"; fi
+fi
+# The 1080p60 build (docs/1080p60.md) when it's there; otherwise the system Chromium.
 CHROMIUM=${TENFOOT_CHROMIUM:-$ROOT/chromium/chrome}
 if [ -x "$CHROMIUM" ]; then
   export FONTCONFIG_FILE=/etc/fonts/fonts.conf  # its bundled fontconfig looks for this elsewhere

@@ -12,7 +12,7 @@
   #qr { width: 22vw; height: 22vw; padding: 1.2vw; box-sizing: border-box; border-radius: 2vw; background: #fff; }
   #error { color: #ff9f8f; margin: 0 0 3vh; } [hidden] { display: none !important; }
 </style>
-<main id="wait" hidden><h1>Connecting to your Wi-Fi…</h1><p>This takes up to a minute.</p></main>
+<main id="wait" hidden><h1 id="waitTitle">Looking for a network…</h1><p id="waitText">This only takes a moment.</p></main>
 <div id="start" hidden style="display: contents">
   <img id="qr" alt="">
   <section>
@@ -31,7 +31,11 @@ async function poll() {
   try {
     const s = await (await fetch("http://127.0.0.1:8766/setup", { cache: "no-store", signal: AbortSignal.timeout(3000) })).json();
     if (s.state === "off") return (location.href = "home.html");
-    $("wait").hidden = s.state !== "joining";
+    $("wait").hidden = s.state !== "joining" && s.state !== "checking";
+    if (s.state === "joining") {
+      $("waitTitle").textContent = "Connecting to your Wi-Fi…";
+      $("waitText").textContent = "This takes up to a minute.";
+    }
     $("start").hidden = s.state !== "hotspot";
     if (s.state === "hotspot") {
       $("ssid").textContent = s.ssid;

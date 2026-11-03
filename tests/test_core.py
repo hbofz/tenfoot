@@ -576,8 +576,9 @@ class WifiSetup(unittest.TestCase):
 
         def nmcli(*args, timeout=30):
             s.calls.append(args)
-            ok = not (s.fail_join and "connect" in args)
-            if "connect" in args and ok:
+            joining = "connect" in args or args[-2:-1] == ("up",)
+            ok = not (s.fail_join and joining)
+            if joining and ok:
                 s.up = True
             out = "wifi:connected:Home\n" if s.up and "TYPE,STATE,CONNECTION" in args else "wifi:disconnected:\n" if "TYPE,STATE,CONNECTION" in args else ""
             return mock.Mock(returncode=0 if ok else 4, stdout=out)
@@ -603,6 +604,20 @@ class WifiSetup(unittest.TestCase):
             self.assertLessEqual(started[0] - secs_until_start, 10, saved)
             self.assertGreater(started[0], secs_until_start, saved)
 
+    def test_new_box_says_checking_until_it_finds_a_network(self):
+        s = self.box()
+        s.has_wifi, s.saved_wifi = (lambda: True), (lambda: [])
+        seen = []
+
+        def tick(seconds):
+            seen.append(s.state)
+            s.up = True  # Ethernet came up during the first wait
+            if len(seen) == 2:
+                raise StopIteration
+        with mock.patch("time.sleep", tick), self.assertRaises(StopIteration):
+            s.watch()
+        self.assertEqual(seen, ["checking", "off"])
+
     def test_refuses_bad_forms(self):
         s = self.box()
         with self.assertRaises(ValueError):
@@ -621,6 +636,23 @@ class WifiSetup(unittest.TestCase):
         self.assertIn(("navigate", apps.page_url("home.html")), s.browser.calls)
         self.assertTrue(any("connect" in c and "goodpassword" in c for c in s.calls))
         self.assertIn(("con", "delete", setup.HOTSPOT), s.calls)
+
+    def test_open_network_is_joined_plainly(self):
+        """Not "dev wifi connect": it picks an OWE twin, which the Pi's driver refuses."""
+        s = self.box()
+        s.state = "hotspot"
+        with mock.patch("time.sleep"):
+            s.join("Cafe", "")
+        self.assertEqual(s.state, "off")
+        self.assertIn(("con", "add", "type", "wifi", "ifname", "wlan0", "con-name", "Cafe", "ssid", "Cafe"), s.calls)
+        self.assertFalse(any("connect" in c for c in s.calls))
+
+    def test_open_network_failure_doesnt_blame_a_password(self):
+        s = self.box()
+        s.state, s.fail_join = "hotspot", True
+        with mock.patch("time.sleep"), mock.patch.object(setup, "ThreadingHTTPServer"), mock.patch.object(s, "scan", return_value=[]):
+            s.join("Cafe", "")
+        self.assertNotIn("password", s.error)
 
     def test_bad_password_returns_to_setup_and_forgets_it(self):
         s = self.box()

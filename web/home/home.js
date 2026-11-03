@@ -257,7 +257,17 @@ qr.addEventListener("load", () => ($("rq").hidden = false));
 qr.addEventListener("error", () => ($("rq").hidden = true));
 const loadQr = () => (qr.src = `run/remote-qr.svg?${Date.now()}`);  // the box's address may change: pick up the new one
 loadQr();
+// Often just after opening (Wi-Fi may have only just connected), then once a minute.
+for (let s = 5; s <= 120; s += 5) setTimeout(loadQr, s * 1000);
 setInterval(loadQr, 60 * 1000);
+
+// ---------- A new box with no network belongs on the setup screen, so ask for the first minute after this page opens ----------
+for (let s = 2; s <= 60; s += 2) setTimeout(async () => {
+  try {
+    const r = await (await fetch("http://127.0.0.1:8766/setup", { cache: "no-store", signal: AbortSignal.timeout(1500) })).json();
+    if (r.state !== "off") location.href = "setup.html";
+  } catch {}  // the service is still starting
+}, s * 1000);
 
 // ---------- Just the picture: Up from the top row, or the screensaver after SAVER seconds idle (?saver=N) ----------
 const SAVER = +(params.get("saver") || 600);

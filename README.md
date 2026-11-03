@@ -2,14 +2,14 @@
 
 Turn a Raspberry Pi 4 into a TV box you can use from the couch. It boots straight into a full-screen home screen, and your streaming sites work with arrow keys instead of a mouse.
 
-> **Status: early.** Developed on one Pi on one TV. The installer has run on a clean Pi OS, but a clean install hasn't been tried on a real TV yet.
+> **Status: early.** Developed on one Pi on one TV. A fresh image has been set up from a phone and run on a real TV, but streaming with a real account hasn't been tried on it yet.
 
 - **Streaming sites, remote-friendly.** YouTube's TV app, Netflix, Disney+, HBO Max, Crunchyroll, Paramount+ and Shahid. Arrows move a highlight, OK picks, Back goes back, and an on-screen keyboard handles sign-in. Any other website works too, with a cursor for what the highlight can't reach.
 - **Your phone is the remote.** Scan the QR code on the TV to get a touchpad, keys, typing and volume, with no app to install.
 - **Your TV's remote works too,** if your TV forwards it over HDMI-CEC. Bluetooth and USB remotes work as well.
 - **Spotify Connect,** with a Now Playing screen and synced lyrics (a Spotify Premium account is needed).
 - **AirPlay,** optional, through UxPlay.
-- **Optional 1080p60** with the GPU idle, with [five small patches](docs/1080p60.md) to Chromium and wlroots.
+- **1080p60 with the GPU idle** in the ready-made image, using [five small patches](docs/1080p60.md) to Chromium and wlroots. A manual install adds them separately.
 
 You need your own subscriptions: Tenfoot plays what your accounts already can, through the sites' own web players. It doesn't bypass DRM, and Widevine comes from Raspberry Pi's own package.
 
@@ -57,7 +57,7 @@ Anyone with a link can control the TV. They can't reach this box's own services 
 | `inject/` | Scripts put into every page: the highlight, keyboard, per-site rules (`SITES` in `sites.js`) |
 | `web/` | The home screen, Spotify screen and phone remote |
 | `system/` | Kiosk launcher, browser policy, service files |
-| `patches/` | The optional Chromium and wlroots builds |
+| `patches/` | The Chromium and wlroots builds for 1080p60 |
 
 ## Tests
 
