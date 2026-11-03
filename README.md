@@ -68,6 +68,7 @@ Anyone with a link can control the TV. They can't reach this box's own services 
     python3 tests/browser/test_keyboard.py
     python3 tests/browser/test_service.py   # the real service against a real Chromium; visits YouTube and Shahid
     sudo -u tenfoot -H sh -c 'cd ~/tenfoot && python3 tests/box_check.py'   # on an installed box: the running service, browser and input
+    tools/vm-boot.sh tenfoot-*.img.xz       # an image's first boot in QEMU's Pi 4 model, on any Linux PC (no Wi-Fi, TV or network)
 
 ## Credits and licence
 

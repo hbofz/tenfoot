@@ -5,7 +5,7 @@ After=pipewire-pulse.service
 [Service]
 ExecStart=@ROOT@/spotify/go-librespot --config_dir %h/.config/go-librespot
 Restart=always
-RestartSec=3
+RestartSec=20
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes

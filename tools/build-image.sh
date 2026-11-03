@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds a ready-to-flash Tenfoot image from the current Raspberry Pi OS Lite. Run as a sudo-capable user on a 64-bit
-# Raspberry Pi (it runs the image's own programs directly). Needs about 12 GB free.
+# Raspberry Pi, or on any Linux PC with qemu-user-static, which runs the image's own programs. Needs about 12 GB free.
 #   tools/build-image.sh OUTPUT_DIR [WALLPAPERS_DIR] [VIDEO_DIR]
 # WALLPAPERS_DIR: a finished web/home/wallpapers folder to put in the image, so the photos are there from the first boot.
 # VIDEO_DIR: the 1080p60 builds from docs/1080p60.md, chromium-tenfoot.tar.zst (or chromium-*.tar.zst) and libwlroots-0.20.so.
@@ -10,7 +10,7 @@ OUT=$(mkdir -p "$1" && cd "$1" && pwd)
 WALLS=${2:-}
 VIDEO=${3:-}
 GROW=4G
-[ "$(dpkg --print-architecture)" = arm64 ] || { echo "Run this on a 64-bit Raspberry Pi" >&2; exit 1; }
+[ "$(dpkg --print-architecture)" = arm64 ] || [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] || { echo "Needs a 64-bit Raspberry Pi, or qemu-user-static" >&2; exit 1; }
 for tool in xz parted resize2fs e2fsck losetup curl; do command -v "$tool" >/dev/null || PATH=$PATH:/usr/sbin:/sbin; done
 
 URL=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://downloads.raspberrypi.com/raspios_lite_arm64_latest)
