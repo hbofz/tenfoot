@@ -146,11 +146,9 @@
   #sw, .stack { display: grid; gap: 14px; }
   .pill.on { background: var(--fg); color: var(--bg); }
   .pill.danger { color: var(--danger); }
-  a.report { display: grid; place-items: center; text-decoration: none; color: inherit; background: var(--raised); }
+  a.report { display: grid; place-items: center; text-decoration: none; color: inherit; background: var(--surface); }
   .row2 .pill { flex: 1; }
   .add { color: #1ed760; }
-  #sync { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
-  #sync b { font-variant-numeric: tabular-nums; min-width: 5em; text-align: center; }
   details { font-size: 14px; color: var(--muted); background: var(--surface); border-radius: 14px; padding: 12px 14px; }
   details summary { color: var(--fg); font-weight: 600; }
   details b { color: var(--fg); }
@@ -244,9 +242,6 @@
   <h3>Spotify on the TV</h3>
   <div id="accts"></div>
   <div class="row2" id="acctBtns"></div>
-  <h3>Lyrics timing</h3>
-  <div id="sync"></div>
-  <p class="note">Nudge if the lyrics run ahead of or behind the music.</p>
   <h3>Software</h3>
   <div id="sw"></div>
   <h3>Help</h3>
@@ -713,7 +708,7 @@ async function software() {
 }
 async function accounts() {
   try {
-    const { active, accounts, lyricsMs } = await api({ a: "spotify", k: "list" });
+    const { active, accounts } = await api({ a: "spotify", k: "list" });
     const mine = myKeys();
     const box = $("accts");
     box.replaceChildren();
@@ -742,10 +737,6 @@ async function accounts() {
     })];
     if (active) btns.push(button("Log out TV", "pill", async () => { await api({ a: "spotify", k: "logout" }).catch((e) => toast(why(e))); accounts(); }));
     $("acctBtns").replaceChildren(...btns);
-    const fmt = (ms) => `${ms > 0 ? "+" : ""}${(ms / 1000).toFixed(2)}s`;
-    const nudge = (ms) => async () => { tick(); const r = await api({ a: "spotify", k: "sync", ms }); $("sync").querySelector("b").textContent = fmt(r.lyricsMs); };
-    $("sync").replaceChildren(button("◀ Earlier", "pill", nudge(-100)), Object.assign(document.createElement("b"), { textContent: fmt(lyricsMs) }),
-                              button("Later ▶", "pill", nudge(100)));
   } catch (e) { $("accts").replaceChildren(Object.assign(document.createElement("p"), { className: "note", textContent: why(e) })); }
 }
 
