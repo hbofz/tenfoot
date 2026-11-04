@@ -61,6 +61,10 @@ Measured: about 75 MB an hour written to the card with the browser open, mostly 
 5. **Demo video and README screenshots.**
 6. **Make the repo public.**
 
+## Tested on 2026-11-04, from a freshly flashed card
+
+A test copy of the `overnight` image, written to the SD card from the Pi's other system and booted like a new box: the setup hotspot came up and an iPhone put it on Wi-Fi, the timezone came from that phone, the patched browser and 1080p60 build ran, YouTube played at 60.0 fps with 0.08% dropped frames (the earlier 2.4% is gone), no ads showed (signed out), the phone remote (in `tailscale` mode), a guest remote made into a full one with a code from the TV, and the diagnostic report downloaded and opened on the iPhone. Flashing it found one real bug, now fixed: Raspberry Pi OS only switches the console login on in its first-boot wizard, which images skip, so a fresh card stayed on boot text and never started the TV (`install.sh` now enables `getty@tty1` itself).
+
 ## Not tested yet
 
 - Playback with a signed-in account (Netflix, Disney+, HBO Max, Shahid and the others) on this system, and Spotify sign-in and music.
@@ -68,12 +72,12 @@ Measured: about 75 MB an hour written to the card with the browser open, mostly 
 - Setup from an Android phone.
 - HDMI-CEC with a TV that forwards its remote's buttons, and Bluetooth or USB remotes on this system.
 - AirPlay (`install.sh --airplay`). It isn't in the image.
-- The remote in the default `lan` mode on a normal home network. Testing so far used `tailscale` mode, because the test network keeps devices apart.
+- The remote in the default `lan` mode on a normal home network. Testing so far used `tailscale` mode, because the test network keeps devices apart (confirmed again on 2026-11-04: in `lan` mode the phone couldn't reach the TV there).
 - `install.sh` on the full desktop Raspberry Pi OS. Only Lite was tried.
 
 ## Known issues
 
-- **Dropped frames:** YouTube 1080p60 dropped about 2.4% of frames in the first minutes after boot. The patched build's own clip test showed none, so recheck after a few minutes of playback.
+- **Guest and campus Wi-Fi:** networks that keep devices apart (most guest networks) stop the phone reaching the TV in the default `lan` mode: the remote page just doesn't load. Use `remote_mode = "tailscale"` there. A first boot on such a network could explain this on screen; it doesn't yet.
 - **Wallpaper downloads:** `tools/wallpapers.py` is slow on some networks (Wikimedia rate limits); one test took about 20 minutes for 2 photos. The image includes all 53, so this only affects manual installs.
 - **Wi-Fi driver:** the Pi 4's Wi-Fi driver rejects networks that pair an open name with OWE ("invalid akm suite"). Setup joins open networks as plain open networks to avoid it (`tenfoot/setup.py`).
 - **Auto-login file name:** on a fresh image, something during the first boot removed a getty drop-in named `autologin.conf`. The cause wasn't found; installing it as `tenfoot-autologin.conf` avoids it, and a real first boot confirmed that.
