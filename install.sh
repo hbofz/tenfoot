@@ -114,6 +114,9 @@ sudo systemctl enable tenfoot-update.timer 2>/dev/null
 sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
 printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$TV" | sudo tee /etc/systemd/system/getty@tty1.service.d/tenfoot-autologin.conf >/dev/null
 sudo systemctl set-default multi-user.target >/dev/null
+# Raspberry Pi OS only switches the console login on at the end of its first-boot setup wizard, which an image skips
+# (a TV has no keyboard for it): switch it on here, or a fresh card never logs in and the screen stays on boot text.
+sudo systemctl enable getty@tty1.service >/dev/null 2>&1
 [ "$IMAGE" = 1 ] || sudo systemctl daemon-reload
 
 # If its service manager dies (the kernel's last-ditch out-of-memory killer can take it), start it again: it brings
