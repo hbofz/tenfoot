@@ -107,6 +107,20 @@ def write_qr(settings, house, path=None):
     os.replace(tmp, path)
 
 
+def add_person(settings, name):
+    """A personal link for name (made if it's new): its address."""
+    ppl = people(PEOPLE_FILE)
+    ppl.setdefault(name, secrets.token_urlsafe(18))
+    write_private(PEOPLE_FILE, "".join(f"{n} {t}\n" for n, t in sorted(ppl.items())))
+    return link_url(settings, ppl[name])
+
+
+def new_phone_name():
+    """The next free "phone-N" for a phone that made itself a full remote."""
+    taken = set(people(PEOPLE_FILE))
+    return next(f"phone-{n}" for n in range(1, 10000) if f"phone-{n}" not in taken)
+
+
 def cli(settings, args):
     """tenfoot links | link NAME | revoke NAME."""
     house = load_token()

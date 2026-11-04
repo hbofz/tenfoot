@@ -6,7 +6,7 @@ from .apps import app_of, app_urls, page_url, to_url
 from .cursor import Cursor
 from .inputs import KEYS
 from .overlay import toast_js, volume_js
-from . import clock, health, idle, settings as phone_settings, updates, wipe
+from . import clock, health, idle, links, settings as phone_settings, updates, wipe
 
 SINK = "@DEFAULT_AUDIO_SINK@"
 PASSIVE = {"state", "apps", "health", "settings", "update", "timezone"}  # the phone checking in: not someone at the remote
@@ -101,6 +101,15 @@ class Controls:
             threading.Timer(1.5, self.reset_then_restart).start()
         return {"done": kind}
 
+    def own(self, cmd):
+        """The TV's QR code gives a guest remote. A guest who can see the TV (the code shows only there) gets a link of
+        their own: Settings and all, revoked with tenfoot revoke phone-N."""
+        if "code" not in cmd:
+            wipe.ask("own", self.browser)
+            return {"asked": True}
+        wipe.confirm("own", cmd["code"])
+        return {"link": links.add_person(self.settings, links.new_phone_name())}
+
     @staticmethod
     def reset_then_restart():
         try:
@@ -157,6 +166,8 @@ class Controls:
             return {"canChange": False} if cmd.get("by") == "guest" else {**phone_settings.current(self.settings), "canChange": True}
         elif a == "wipe":
             return self.wipe(k, cmd)
+        elif a == "own":
+            return self.own(cmd)
         elif a == "health":
             return health.status()
         elif a == "timezone":

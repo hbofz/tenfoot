@@ -635,8 +635,22 @@ async function tvSettings() {
   const box = $("tvSet"), make = (tag, props) => Object.assign(document.createElement(tag), props);
   let s;
   try { s = await api({ a: "settings" }); } catch (e) { return; }
-  $("tvH").hidden = box.hidden = !s.canChange;
-  if (!s.canChange) return;
+  $("tvH").hidden = box.hidden = false;
+  if (!s.canChange) {  // the TV's QR code is a guest's remote: whoever can see the TV can make theirs a full one
+    box.replaceChildren(
+      button("Make this my remote", "pill", async () => {
+        try {
+          await api({ a: "own" });
+          const code = prompt("Type the 4-digit code the TV is showing:");
+          if (!code) return;
+          const r = await api({ a: "own", code: code.trim() });
+          toast("This phone is now a full remote. Add this page to your Home Screen to keep it.", 6000);
+          setTimeout(() => (location.href = r.link), 1500);
+        } catch (e) { toast(why(e)); }
+      }),
+      make("p", { className: "note", textContent: "This is a guest remote. Make it yours to change the TV's settings: a code shows on the TV." }));
+    return;
+  }
   const change = async (what, msg) => {
     try { await api({ a: "settings", k: "set", ...what }); toast(msg); } catch (e) { toast(why(e)); }
     tvSettings();

@@ -52,10 +52,15 @@ def marker(name):
     return CONFIG_DIR / name
 
 
+WHAT = {"signout": "sign this TV out of everything", "reset": "reset this TV to how it came",
+        "own": "make your phone a full remote for this TV"}
+
+
 def ask(kind, browser):
-    """Show a fresh code for a sign-out or a reset, on the TV's own home screen (a website on screen could read it)."""
-    if kind not in ("signout", "reset"):
-        raise ValueError("Sign out, or reset")
+    """Show a fresh code for a sign-out, a reset, or making a phone a full remote ("own"), on the TV's own home screen
+    (a website on screen could read it)."""
+    if kind not in WHAT:
+        raise ValueError("Sign out, reset, or make this phone a remote")
     now = time.monotonic()
     with _lock:
         locked = guard()["locked_until"] - time.time()
@@ -70,7 +75,7 @@ def ask(kind, browser):
         _asked_at[0] = now
         code = f"{secrets.randbelow(10000):04d}"
         _asked.clear()
-    what = "sign this TV out of everything" if kind == "signout" else "reset this TV to how it came"
+    what = WHAT[kind]
     browser.one_tab()
     browser.navigate(page_url("home.html"))
     js = SHOW.replace("TOAST", toast_js(f"To {what}, type {code} on your phone", CODE_FOR * 1000))

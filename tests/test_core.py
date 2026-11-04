@@ -561,6 +561,23 @@ class Wipe(unittest.TestCase):
         self.assertFalse((self.conf / "token").exists())
         self.assertFalse((self.conf / "reset-pending-keep-wifi").exists())
 
+    def test_a_guest_who_can_see_the_tv_gets_a_remote_of_their_own(self):
+        with mock.patch.object(links, "PEOPLE_FILE", self.conf / "people"), mock.patch.object(links, "TOKEN_FILE", self.conf / "token"), \
+                mock.patch.object(links, "link_url", lambda settings, tok: f"https://tv.example/{tok}/"):
+            (self.conf / "people").write_text("")
+            (self.conf / "token").write_text("Abc123def456ghi789jkl012")
+            c = make_controls(browser=self.tv())
+            self.assertEqual(c.handle({"a": "own", "by": "guest"}), {"asked": True})
+            code = wipe._asked["code"]
+            with self.assertRaises(ValueError):
+                c.handle({"a": "own", "by": "guest", "code": "nope"})
+            link = c.handle({"a": "own", "by": "guest", "code": code})["link"]
+            token = link.split("/")[3]
+            ppl = links.people(self.conf / "people")
+            self.assertEqual(ppl, {"phone-1": token})
+            self.assertEqual(links.who(token, links.load_token(self.conf / "token"), ppl), "phone-1")  # not a guest any more
+            self.assertEqual(links.new_phone_name(), "phone-2")
+
     def test_not_for_guests(self):
         with self.assertRaises(ValueError):
             make_controls().handle({"a": "wipe", "k": "reset", "by": "guest"})
