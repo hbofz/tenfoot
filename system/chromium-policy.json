@@ -26,6 +26,7 @@
   "DefaultNotificationsSetting": 2,
   "DefaultGeolocationSetting": 2,
   "AudioCaptureAllowed": false,
+  "ScreenCaptureAllowed": false,
   "VideoCaptureAllowed": false,
   "LocalNetworkAccessBlockedForUrls": [
     "*"

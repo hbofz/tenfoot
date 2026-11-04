@@ -40,7 +40,7 @@ By default phones connect over your home network, using a secret link. The link,
     tenfoot revoke sam     # it stops working at once
     tenfoot revoke house   # new shared secret: the shared link and the TV's QR code both change
 
-Anyone with a link can control the TV. They can't reach this box's own services or addresses on your network from the "open on TV" box.
+Anyone with a link can control the TV. The TV's QR code gives a guest remote, without the TV's settings; anyone who can see the TV can make theirs a full one (Settings, then a code shown on the TV), named `phone-1`, `phone-2`... `tenfoot revoke phone-1` takes one back, and `tenfoot revoke house` all of them. They can't reach this box's own services or addresses on your network from the "open on TV" box.
 
 ## How it fits together
 

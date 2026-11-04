@@ -110,9 +110,10 @@ def write_qr(settings, house, path=None):
 def add_person(settings, name):
     """A personal link for name (made if it's new): its address."""
     ppl = people(PEOPLE_FILE)
-    ppl.setdefault(name, secrets.token_urlsafe(18))
+    token = ppl.setdefault(name, secrets.token_urlsafe(18))
+    url = link_url(settings, token)  # first: if the address can't be worked out yet (Tailscale starting), nothing's made
     write_private(PEOPLE_FILE, "".join(f"{n} {t}\n" for n, t in sorted(ppl.items())))
-    return link_url(settings, ppl[name])
+    return url
 
 
 def new_phone_name():
@@ -123,8 +124,8 @@ def new_phone_name():
 
 def cli(settings, args):
     """tenfoot links | link NAME | revoke NAME."""
-    house = load_token()
-    ppl = people()
+    house = load_token(TOKEN_FILE)
+    ppl = people(PEOPLE_FILE)
     if args == ["links"]:
         for name in ["house", *sorted(ppl)]:
             print(name)
@@ -133,11 +134,13 @@ def cli(settings, args):
     if cmd not in ("link", "revoke") or not re.fullmatch(r"[a-z0-9_-]{1,32}", name):
         sys.exit(USAGE)
     if cmd == "revoke" and name == "house":
+        # The phones that made themselves remotes through the guest QR go with it: they came in the same way.
+        write_private(PEOPLE_FILE, "".join(f"{n} {t}\n" for n, t in sorted(ppl.items()) if not n.startswith("phone-")))
         os.remove(TOKEN_FILE)
         subprocess.run(["systemctl", "--user", "restart", "tenfoot"], check=True, timeout=30)
-        return print("revoked the house link and the guest QR; the TV shows a new QR")
-    if name in ("house", "guest"):
-        sys.exit(f"'{name}' is taken")
+        return print("revoked the house link, the guest QR and the phones that made themselves remotes; the TV shows a new QR")
+    if name in ("house", "guest") or cmd == "link" and name.startswith("phone-"):
+        sys.exit(f"'{name}' is taken (phone-N names are for phones that make themselves remotes)")
     if cmd == "link":
         ppl.setdefault(name, secrets.token_urlsafe(18))
     elif ppl.pop(name, None) is None:

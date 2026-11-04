@@ -415,6 +415,7 @@ class Wipe(unittest.TestCase):
                   mock.patch.object(wipe.Path, "home", lambda: self.home), mock.patch.object(wipe, "run", run),
                   mock.patch.object(wipe.kiosk, "restart_chromium", lambda p: self.calls.append(("restart chromium",))),
                   mock.patch.object(wipe, "_asked", {}), mock.patch.object(wipe.getpass, "getuser", lambda: "tenfoot"),
+                  mock.patch.object(wipe, "_own_asked", {}), mock.patch.object(wipe, "_own_asked_at", [-1e9]),
                   mock.patch.object(wipe.phone_settings, "rename_services", lambda n: self.calls.append(("rename", n))),
                   mock.patch.object(config, "RUN", self.home / "run"), mock.patch.object(wipe.time, "sleep", lambda s: None),
                   mock.patch.object(wipe, "_asked_at", [-1e9])):
@@ -561,22 +562,58 @@ class Wipe(unittest.TestCase):
         self.assertFalse((self.conf / "token").exists())
         self.assertFalse((self.conf / "reset-pending-keep-wifi").exists())
 
+    def links_here(self):
+        (self.conf / "people").write_text("")
+        (self.conf / "token").write_text("Abc123def456ghi789jkl012")
+        for p in (mock.patch.object(links, "PEOPLE_FILE", self.conf / "people"), mock.patch.object(links, "TOKEN_FILE", self.conf / "token"),
+                  mock.patch.object(links, "link_url", lambda settings, tok: f"https://tv.example/{tok}/")):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def own(self, c, **cmd):
+        return c.handle({"a": "own", "by": "guest", **cmd})
+
     def test_a_guest_who_can_see_the_tv_gets_a_remote_of_their_own(self):
-        with mock.patch.object(links, "PEOPLE_FILE", self.conf / "people"), mock.patch.object(links, "TOKEN_FILE", self.conf / "token"), \
-                mock.patch.object(links, "link_url", lambda settings, tok: f"https://tv.example/{tok}/"):
-            (self.conf / "people").write_text("")
-            (self.conf / "token").write_text("Abc123def456ghi789jkl012")
-            c = make_controls(browser=self.tv())
-            self.assertEqual(c.handle({"a": "own", "by": "guest"}), {"asked": True})
-            code = wipe._asked["code"]
+        self.links_here()
+        c = make_controls(browser=self.tv())
+        self.assertEqual(self.own(c), {"asked": True})
+        code = wipe._own_asked["code"]
+        with self.assertRaises(ValueError):
+            self.own(c, code="nope")
+        token = self.own(c, code=code)["link"].split("/")[3]
+        ppl = links.people(self.conf / "people")
+        self.assertEqual(ppl, {"phone-1": token})
+        self.assertEqual(links.who(token, links.load_token(self.conf / "token"), ppl), "phone-1")  # not a guest any more
+        with self.assertRaises(ValueError):
+            c.handle({"a": "own", "by": "phone-1"})  # a full remote already
+
+    def test_a_guest_cant_lock_the_owner_out_of_reset(self):
+        self.links_here()
+        c = make_controls(browser=self.tv())
+        self.own(c)
+        for _ in range(3):
             with self.assertRaises(ValueError):
-                c.handle({"a": "own", "by": "guest", "code": "nope"})
-            link = c.handle({"a": "own", "by": "guest", "code": code})["link"]
-            token = link.split("/")[3]
-            ppl = links.people(self.conf / "people")
-            self.assertEqual(ppl, {"phone-1": token})
-            self.assertEqual(links.who(token, links.load_token(self.conf / "token"), ppl), "phone-1")  # not a guest any more
-            self.assertEqual(links.new_phone_name(), "phone-2")
+                self.own(c, code="nope")
+        with self.assertRaises(ValueError):
+            self.own(c)  # the guest is locked out of this...
+        wipe.ask("signout", self.tv())  # ...but the owner can still sign out, straight away (its own 20 s gap too)
+        self.assertTrue(wipe.confirm("signout", wipe._asked["code"]))
+
+    def test_revoking_the_house_link_drops_the_phones(self):
+        self.links_here()
+        (self.conf / "people").write_text("phone-1 aaaaaaaaaaaaaaaaaaaaaaaa\nsam bbbbbbbbbbbbbbbbbbbbbbbb\n")
+        with mock.patch.object(links.subprocess, "run"):
+            links.cli(config.Settings(), ["revoke", "house"])
+        self.assertEqual(list(links.people(self.conf / "people")), ["sam"])
+        with self.assertRaises(SystemExit):
+            links.cli(config.Settings(), ["link", "phone-7"])  # reserved
+
+    def test_no_link_saved_without_an_address(self):
+        self.links_here()
+        with mock.patch.object(links, "link_url", mock.Mock(side_effect=RuntimeError("tailscale has no DNS name yet"))):
+            with self.assertRaises(RuntimeError):
+                links.add_person(config.Settings(), "phone-1")
+        self.assertEqual(links.people(self.conf / "people"), {})
 
     def test_not_for_guests(self):
         with self.assertRaises(ValueError):

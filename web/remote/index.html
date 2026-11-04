@@ -641,11 +641,18 @@ async function tvSettings() {
       button("Make this my remote", "pill", async () => {
         try {
           await api({ a: "own" });
-          const code = prompt("Type the 4-digit code the TV is showing:");
-          if (!code) return;
-          const r = await api({ a: "own", code: code.trim() });
-          toast("This phone is now a full remote. Add this page to your Home Screen to keep it.", 6000);
-          setTimeout(() => (location.href = r.link), 1500);
+          for (let ask = "Type the 4-digit code the TV is showing:"; ;) {
+            const code = prompt(ask);
+            if (!code) return;
+            try {
+              const r = await api({ a: "own", code: code.trim() });
+              toast("This phone is now a full remote. In Safari, Add to Home Screen to keep it.", 6000);
+              return setTimeout(() => (location.href = r.link), 1500);
+            } catch (e) {
+              if (!/not the code/.test(why(e))) throw e;  // a typo: try again while the code is still up
+              ask = "That's not it. Type the code the TV is showing:";
+            }
+          }
         } catch (e) { toast(why(e)); }
       }),
       make("p", { className: "note", textContent: "This is a guest remote. Make it yours to change the TV's settings: a code shows on the TV." }));

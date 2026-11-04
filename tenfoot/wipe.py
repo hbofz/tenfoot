@@ -25,22 +25,30 @@ from .overlay import toast_js
 CODE_FOR, TRIES, ASK_GAP = 120, 3, 20  # TRIES: wrong codes, in all, before each (longer) lock
 PHONE_KEYS = ("name", "place", "latitude", "longitude", "temperature_unit", "updates")
 _lock = threading.Lock()
-_asked = {}  # what's waiting for its code: {"kind", "code", "until", "tries"}
+_asked = {}  # sign-out and reset: what's waiting for its code: {"kind", "code", "until", "tries"}
 _asked_at = [-1e9]  # the last ask (time.monotonic)
+# "Make this my remote" (any guest can ask) has codes, timing and wrong-code count of its own: a guest locking that out
+# mustn't lock the owner out of signing out or resetting.
+_own_asked, _own_asked_at = {}, [-1e9]
 
 
-def guard():
+def state(kind):
+    """(the code waiting, the last ask, the wrong-code file) for kind's group."""
+    return (_own_asked, _own_asked_at, "own-guard") if kind == "own" else (_asked, _asked_at, "wipe-guard")
+
+
+def guard(name="wipe-guard"):
     """Wrong codes so far and the lock they earned, kept on disk: a service restart (a rename from the phone does one)
     mustn't give a guesser a fresh start. locked_until is wall-clock time, which a restart doesn't reset."""
     try:
-        g = json.loads(marker("wipe-guard").read_text())
+        g = json.loads(marker(name).read_text())
         return {"wrong": int(g["wrong"]), "rounds": int(g["rounds"]), "locked_until": float(g["locked_until"])}
     except (OSError, ValueError, KeyError, TypeError):
         return {"wrong": 0, "rounds": 0, "locked_until": 0.0}
 
 
-def save_guard(g):
-    config.write_private(marker("wipe-guard"), json.dumps(g))
+def save_guard(g, name="wipe-guard"):
+    config.write_private(marker(name), json.dumps(g))
 SHOW = """(() => {
   if (location.protocol !== "file:") return false;  // only on the TV's own page: no website can read it there
   TOAST;
@@ -62,19 +70,20 @@ def ask(kind, browser):
     if kind not in WHAT:
         raise ValueError("Sign out, reset, or make this phone a remote")
     now = time.monotonic()
+    asked, asked_at, name = state(kind)
     with _lock:
-        locked = guard()["locked_until"] - time.time()
+        locked = guard(name)["locked_until"] - time.time()
         if locked > 0:
             raise ValueError(f"Too many wrong codes: try again in {int(locked) // 60 + 1} min")
-        if now - _asked_at[0] < ASK_GAP:
+        if now - asked_at[0] < ASK_GAP:
             raise ValueError("A code is already on the TV")
         try:
-            save_guard(guard())  # no code unless wrong ones can be counted (a full disk: none at all)
+            save_guard(guard(name), name)  # no code unless wrong ones can be counted (a full disk: none at all)
         except OSError:
             raise ValueError("Couldn't get ready (is the storage full?): try again later") from None
-        _asked_at[0] = now
+        asked_at[0] = now
         code = f"{secrets.randbelow(10000):04d}"
-        _asked.clear()
+        asked.clear()
     what = WHAT[kind]
     browser.one_tab()
     browser.navigate(page_url("home.html"))
@@ -89,30 +98,31 @@ def ask(kind, browser):
     else:
         raise ValueError("The TV didn't show the code: try again")
     with _lock:
-        _asked.update(kind=kind, code=code, until=time.monotonic() + CODE_FOR, tries=0)
+        asked.update(kind=kind, code=code, until=time.monotonic() + CODE_FOR, tries=0)
 
 
 def confirm(kind, code):
     """True if code is the one the TV is showing for kind. Every try is counted on disk before it's checked (so no guess
     is ever compared unless it's on record), and every third wrong one, however many asks they were spread over, locks
     it for longer: 1, 2, 4... minutes. Guessing a 4-digit code is hopeless that way."""
+    _asked, _, name = state(kind)
     with _lock:
         if not _asked or _asked["kind"] != kind or time.monotonic() > _asked["until"]:
             _asked.clear()
             raise ValueError("That code has run out: ask again")
-        g = guard()
+        g = guard(name)
         g["wrong"] += 1  # until shown otherwise
         if g["wrong"] % TRIES == 0:
             g["rounds"] += 1
             g["locked_until"] = time.time() + 60 * 2 ** min(g["rounds"] - 1, 10)
         try:
-            save_guard(g)
+            save_guard(g, name)
         except OSError:  # can't count it: no more guesses at this code
             _asked.clear()
             raise ValueError("Couldn't record that: try again later") from None
         if secrets.compare_digest(str(code), _asked["code"]):
             _asked.clear()
-            marker("wipe-guard").unlink(missing_ok=True)  # right: the count starts again
+            marker(name).unlink(missing_ok=True)  # right: the count starts again
             return True
         if g["wrong"] % TRIES == 0:
             _asked.clear()

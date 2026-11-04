@@ -104,6 +104,8 @@ class Controls:
     def own(self, cmd):
         """The TV's QR code gives a guest remote. A guest who can see the TV (the code shows only there) gets a link of
         their own: Settings and all, revoked with tenfoot revoke phone-N."""
+        if cmd.get("by") != "guest":
+            raise ValueError("This phone is a full remote already")
         if "code" not in cmd:
             wipe.ask("own", self.browser)
             return {"asked": True}
