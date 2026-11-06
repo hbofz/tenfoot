@@ -24,8 +24,10 @@ SITE_BLOCK = {d: [{"urlPattern": u, "block": True} for u in JUNK]
 # A show playing on one of these (its player page). Its video arrives in many small pieces, and
 # with the Network domain on, Chromium reports every piece to the watcher: under HBO's player that
 # was ~30% of a core in the browser and ~25% in this service. So Network is off once a player page
-# has loaded, and on again for any page load and when the page leaves the player.
-WATCHING = re.compile(r"https://(play\.hbomax\.com/video/watch/|www\.disneyplus\.com/([\w-]+/)?play/)")
+# has loaded, and on again for any page load and when the page leaves the player. Left on, it also
+# piles objects into Blink's heap: ~14 MB a minute, ~1 GB over a film, and the Pi swaps. HBO serves
+# from both play. and www.
+WATCHING = re.compile(r"https://((play|www)\.hbomax\.com/video/watch/|www\.disneyplus\.com/([\w-]+/)?play/)")
 
 
 def wants_tv(url):

@@ -698,7 +698,8 @@ class Sites(unittest.TestCase):
         self.assertEqual(sites.rules_for("about:blank"), [])
 
     def test_watching(self):
-        for u in ("https://play.hbomax.com/video/watch/31ed7e52", "https://www.disneyplus.com/play/822d988b"):
+        for u in ("https://play.hbomax.com/video/watch/31ed7e52", "https://www.hbomax.com/video/watch/31ed7e52",
+                  "https://www.disneyplus.com/play/822d988b"):
             self.assertTrue(sites.WATCHING.match(u), u)
         for u in ("https://play.hbomax.com/show/x", "https://www.disneyplus.com/browse/x", "https://evil.example/https://play.hbomax.com/video/watch/x"):
             self.assertFalse(sites.WATCHING.match(u), u)
